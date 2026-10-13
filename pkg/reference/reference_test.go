@@ -67,6 +67,24 @@ func TestNewRejectsBlankTenant(t *testing.T) {
 	_ = New("", uuid.NewString(), "sha256:abc123", 1, 1)
 }
 
+func BenchmarkEncode(b *testing.B) {
+	ref := New("acme", "550e8400-e29b-41d4-a716-446655440000", "sha256:abc123", 1, 3)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ref.Encode()
+	}
+}
+
+func BenchmarkParse(b *testing.B) {
+	raw := New("acme", "550e8400-e29b-41d4-a716-446655440000", "sha256:abc123", 1, 3).Encode()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Parse(raw); err != nil {
+			b.Fatalf("parse: %v", err)
+		}
+	}
+}
+
 func TestEncodeHasVersionPrefix(t *testing.T) {
 	ref := New("acme", uuid.NewString(), "sha256:abc123", 1, 1)
 	if !strings.HasPrefix(ref.Encode(), "v1:") {

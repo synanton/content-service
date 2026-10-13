@@ -16,13 +16,13 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 **Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
 
-*State as of 2026-10-13 — Phase 1 extended: S3/MinIO object tiers + gRPC surface, 24 integration tests green.*
+*State as of 2026-10-13 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 42 integration tests green.*
 
 ### Maturity
 
 | Area | Implemented | Unit/integration tested | Conformance-validated | Benchmark-validated |
 |---|---|---|---|---|
-| Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core) | ⬜ |
+| Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core+Extended suite) | ⬜ |
 | Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core+Extended suite) | ⬜ |
 | HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ⬜ |
 | gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ⬜ |
@@ -34,7 +34,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 `⬜` = not yet; nothing in this table is claimed before its evidence exists.
 
-Explicitly out of scope for v0.2.0: Parquet batching, multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
+Explicitly out of scope for v0.2.0: open-batch Parquet appends (writes are single-row files; merging is implemented), multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
 
 ---
 
@@ -47,7 +47,7 @@ It targets Commitix large-payload externalization first, then ingestion artifact
 ### Core Mechanisms
 
 - **Content-addressable dedup** by `(tenant_id, digest)` — same bytes, same tenant → same reference; same bytes, different tenant → separate references, no existence leak
-- **Tier routing by size** — inline (< 4 KiB), Parquet batches (< 256 KiB), individual S3 objects (above); Phase 1 records the tier label with bytes in Postgres
+- **Tier routing by size** — inline in Postgres (< 4 KiB), single-row Parquet files on S3 (< 256 KiB, merged by the compactor), individual S3 objects (above)
 - **Opaque v1 references** — URI-encoded `tenant_id`, `artifact_id` (UUID), `digest`, `generation`, `serializer_version`; 512-character bound; wire format is not public API
 - **Two-phase deletion** — `markForDeletion` releases one owner's reference; physical deletion needs ref count zero, no legal hold, grace-period expiry
 - **Retention lattice** — `legal_hold > tenant_retention > owner_retention`; erasure-vs-hold conflicts resolve outside the service
@@ -71,28 +71,28 @@ Hexagonal (ports and adapters):
 ```text
 ┌─────────────────────────────────────────────────┐
 │               cmd/content-api                   │
-│              (wiring + HTTP)                    │
+│            (wiring + HTTP/gRPC)                 │
 └───────────────────────┬─────────────────────────┘
-                        │
-         ┌──────────────┼──────────────┐
-         │              │              │
-┌────────▼──────┐ ┌─────▼──────┐ ┌─────▼──────┐
-│  REST API     │ │  Metrics   │ │  Health    │
-│  (net/http)   │ │  (stub)    │ │ (/readyz)  │
-└────────┬──────┘ └─────┬──────┘ └─────┬──────┘
-         │              │              │
-         └──────────────┼──────────────┘
-                        │
-                ┌───────▼────────┐
-                │  ContentStore  │
-                │  port          │
-                └───────┬────────┘
-                        │
-         ┌──────────────┼───────────────┐
-         │              │               │
-┌────────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
-│  PostgreSQL   │ │  S3/MinIO  │ │  Parquet    │
-│  (pgx)        │ │  (planned) │ │  (planned)  │
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+┌────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
+│  REST + gRPC  │ │  Metrics    │ │  Health    │
+│  adapters     │ │ (Prometheus)│ │ (/readyz)  │
+└────────┬──────┘ └──────┬──────┘ └─────┬──────┘
+         │               │               │
+         └───────────────┼───────────────┘
+                         │
+                 ┌───────▼────────┐
+                 │  ContentStore  │
+                 │  port          │
+                 └───────┬────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+┌────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
+│  PostgreSQL   │ │  S3/MinIO   │ │  Parquet    │
+│  (pgx)        │ │ (minio-go)  │ │ (parquet-go)│
 └───────────────┘ └────────────┘ └─────────────┘
 ```
 
@@ -206,9 +206,15 @@ grpcurl -plaintext \
 | Key | Default | Description |
 | --- | ------- | ----------- |
 | `CONTENT_DB_URL` | `postgres://localhost:5432/content?sslmode=disable` | PostgreSQL connection string |
+| `CONTENT_DB_MAX_CONNECTIONS` | `20` | Postgres pool size |
 | `CONTENT_SERVER_HOST` / `CONTENT_SERVER_PORT` | `0.0.0.0` / `8080` | HTTP listen address |
 | `CONTENT_GRPC_PORT` | `50051` | gRPC listen port |
+| `CONTENT_S3_ENDPOINT` / `CONTENT_S3_BUCKET` / `CONTENT_S3_REGION` | `http://localhost:9000` / `synanton-content` / `us-east-1` | Object storage location |
 | `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | Object storage credentials (dev defaults) |
+| `CONTENT_PARQUET_TARGET_ROWS` / `CONTENT_PARQUET_MAX_FILES` | `1000` / `32` | Compaction merge threshold and per-run file cap |
+| `CONTENT_JOBS_DISPOSITION_INTERVAL` / `CONTENT_JOBS_INTEGRITY_INTERVAL` / `CONTENT_JOBS_ORPHAN_INTERVAL` / `CONTENT_JOBS_COMPACTOR_INTERVAL` | `1h` / `24h` / `1h` / `6h` | Sweep cadences |
+| `CONTENT_JOBS_BATCH_SIZE` | `1000` | Row cap per sweep query |
+| `CONTENT_JOBS_SHARD_INDEX` / `CONTENT_JOBS_SHARD_COUNT` | `0` / `1` | Integrity tenant sharding |
 | `CONTENT_API_KEY` | — (empty) | Reserved for gateway auth (Compose requires it set) |
 | `CONTENT_MIGRATE_ON_STARTUP` | `false` | Opt-in; applies `migrations/*.up.sql` before serving |
 | `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |
@@ -233,7 +239,7 @@ grpcurl -plaintext \
 
 ### Logging
 
-Standard-library `log` today. Set container log level via the platform's log driver; structured JSON logging lands with the observability phase.
+Standard-library `log` today. Set container log level via the platform's log driver; structured JSON logging is still future (metrics are live).
 
 ---
 
@@ -264,7 +270,7 @@ Common commands:
 
 ```bash
 make test              # unit tests
-make test-integration  # requires Docker (testcontainers, postgres:16-alpine)
+make test-integration  # requires Docker (testcontainers, postgres:16-alpine + minio/minio)
 make test-conformance  # Design 1.26 Core checks
 make vet               # go vet
 make bench             # digest + reference benchmarks
@@ -278,11 +284,11 @@ See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the phased plan and t
 
 - Phase 0 — Project setup and contract alignment (done)
 - Phase 1 — Core conformance: HTTP + gRPC + Postgres + S3 + integration suite (done)
-- Phase 2 — Commitix adapter design (Java `ContentStore` port)
-- Phase 3 — Optional large-payload adapter
-- Phase 4 — Vertical slice (event envelope carries the reference)
-- Phase 5 — Extended lifecycle: background jobs (done), Parquet compaction, full observability (current)
-- Phase 6 — Adoption decision
+- Phase 2 — Commitix adapter design (Java `ContentStore` port; landed in platform/commitix repos)
+- Phase 3 — Optional large-payload adapter (envelope approach needs no migration; clients exist)
+- Phase 4 — Vertical slice (event envelope carries the reference; open)
+- Phase 5 — Extended lifecycle: background jobs (done), Parquet compaction (done), observability metrics (done); dashboards, structured logging, runbook exercises (open)
+- Phase 6 — Adoption decision (open)
 
 ---
 
@@ -292,7 +298,7 @@ Design 1.26 is the contract; this repo is one conformant implementation. The ser
 
 - Preserves tenant isolation, content-addressable dedup, and the retention lattice
 - Replaces storage-specific mechanisms (bucket layouts, lifecycle rules) with the port contract
-- Is validated by the integration suite in `test/integration/` (12 tests against real Postgres)
+- Is validated by the integration suite in `test/integration/` (42 tests against real Postgres + MinIO) plus the 14-check conformance suite
 
 Key references:
 

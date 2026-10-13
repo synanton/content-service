@@ -1,5 +1,5 @@
--- Consolidated reference schema for content-service (Phase 1).
--- Source of truth is migrations/000001..000004 (*.up.sql); this file
+-- Consolidated reference schema for content-service.
+-- Source of truth is migrations/000001..000005 (*.up.sql); this file
 -- mirrors them for review. Regenerate by concatenating the .up.sql
 -- files in lexical order after any migration change.
 

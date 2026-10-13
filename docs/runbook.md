@@ -47,6 +47,9 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 | Env | Default | Notes |
 |---|---|---|
 | `CONTENT_DB_URL` | `postgres://localhost:5432/content?sslmode=disable` | Postgres DSN; must reach the metadata database |
+| `CONTENT_DB_MAX_CONNECTIONS` | `20` | Postgres pool size |
+| `CONTENT_S3_ENDPOINT` / `CONTENT_S3_BUCKET` / `CONTENT_S3_REGION` | `http://localhost:9000` / `synanton-content` / `us-east-1` | Object storage location (bucket auto-created on startup) |
+| `CONTENT_S3_USE_PATH_STYLE` | `true` | Path-style bucket addressing (required for MinIO) |
 | `CONTENT_SERVER_HOST` | `0.0.0.0` | HTTP listen host |
 | `CONTENT_SERVER_PORT` | `8080` | HTTP listen port |
 | `CONTENT_GRPC_PORT` | `50051` | gRPC listen port (reflection enabled) |
@@ -58,10 +61,14 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 | `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |
 | `CONTENT_INLINE_THRESHOLD_BYTES` | `4096` | Below this: `inline` tier label |
 | `CONTENT_OBJECT_THRESHOLD_BYTES` | `262144` | Above this: `s3` tier label; between: `parquet` |
+| `CONTENT_PARQUET_COMPRESSION` / `CONTENT_PARQUET_BATCH_SIZE` | `zstd` / `1000` | Parquet file codec; legacy batch-size knob (single-row writes today) |
 | `CONTENT_RETENTION_DEFAULT_DAYS` | `90` | Applied when the put omits `retention_days` |
 | `CONTENT_VERIFY_ON_PUBLISH` | `true` | Digest verified at publication time |
 | `CONTENT_VERIFY_ON_READ` | `false` | Full re-hash on read (expensive; replay/audit only) |
 | `CONTENT_ORPHAN_GRACE_PERIOD` | `24h` | Minimum age before an unreferenced object is a candidate |
+| `CONTENT_ORPHAN_SWEEP_INTERVAL` / `CONTENT_ORPHAN_DRY_RUN` | `1h` / `false` | Sweeper cadence; dry-run logs candidates without deleting |
+| `CONTENT_KMS_KEY_ID` | — (empty) | Optional envelope encryption key (reserved) |
+| `CONTENT_LOG_LEVEL` / `CONTENT_METRICS_ENABLED` / `CONTENT_TRACING_ENABLED` | `info` / `true` / `true` | Logging and observability toggles (`CONTENT_OTEL_ENDPOINT` for traces) |
 | `CONTENT_AUDIT_ENABLED` | `true` | Legal-hold and retention changes audited |
 
 ## 4. Health signals
@@ -70,6 +77,7 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 |---|---|
 | `GET /healthz` | Liveness: 200 while serving |
 | `GET /readyz` | Readiness: 200 when Postgres pings, 503 otherwise |
+| `GET /metrics` | Prometheus counters, histograms, gauges (see §8) |
 | `GET /api/v1/capabilities` | Conformance level (`CORE`) and supported tiers |
 
 ## 5. Failure modes
@@ -95,9 +103,10 @@ Run under the Compose `jobs` profile (`docker compose --profile jobs up -d`); pl
 | disposition | `CONTENT_JOBS_DISPOSITION_INTERVAL` (1h) | Single leader (advisory lock `0xC0DE0001`) |
 | integrity | `CONTENT_JOBS_INTEGRITY_INTERVAL` (24h) | Tenant shards (`CONTENT_JOBS_SHARD_INDEX`/`COUNT`) |
 | orphan sweeper | `CONTENT_JOBS_ORPHAN_INTERVAL` (1h) | Single leader (advisory lock `0xC0DE0002`) |
-| parquet compactor | `CONTENT_JOBS_COMPACTOR_INTERVAL` (6h) | Inventory only |
+| parquet compactor | `CONTENT_JOBS_COMPACTOR_INTERVAL` (6h) | Merge sub-target files per tenant; crash windows heal via the sweeper |
 
 - `CONTENT_JOBS_BATCH_SIZE` (default 1000) bounds every sweep query.
+- `CONTENT_JOBS_SHARD_INDEX` / `CONTENT_JOBS_SHARD_COUNT` (default 0/1) shard integrity verification by tenant hash.
 - `CONTENT_SAMPLE_RATE` (default 0.01) samples integrity verification per run.
 - Lost leadership logs `peer leads, skipping tick` and retries next interval — never an error, never dual execution.
 - Disposition deletes the database row first, then the blob; a crash between the two leaves an orphan blob the sweeper heals. Metadata rows whose bytes are missing are audited, never auto-deleted.
@@ -105,10 +114,10 @@ Run under the Compose `jobs` profile (`docker compose --profile jobs up -d`); pl
 
 `markForDeletion` releases one owner's reference row (`released_at = now()`). Physical deletion additionally requires ref count zero, no legal hold, and grace-period expiry, enforced by `disposition-job`. Parquet file rows left unreferenced are reaped in the same transaction; their objects are collected by the orphan sweeper.
 
-## 7. Migrations
+## 8. Migrations
 
-Files: `migrations/000001_create_artifacts.{up,down}.sql` through `000004_create_audit_log.*`. Applied lexically. The service applies `.up.sql` files only; rollbacks are manual via `.down.sql` in reverse order. `000001` carries the `payload BYTEA` column and the `uq_artifacts_tenant_digest` unique constraint that `reference_registry` foreign-keys against — do not split them.
+Files: `migrations/000001_create_artifacts.{up,down}.sql` through `000005_parquet_files.*`. Applied lexically. The service applies `.up.sql` files only; rollbacks are manual via `.down.sql` in reverse order. `000001` carries the `payload BYTEA` column and the `uq_artifacts_tenant_digest` unique constraint that `reference_registry` foreign-keys against — do not split them. `000005` adds the `parquet_files` table plus artifact row pointers (`parquet_file_id`, `parquet_row_idx`).
 
-## 8. Observability
+## 9. Observability
 
 Structured logs via the standard library `log` package today. `/metrics` serves Prometheus counters, histograms, and gauges (put/get latency and errors by tenant and tier, integrity failures, disposition/orphan/parquet-compaction signals). Cardinality note: `tenant_id` labels are unbounded by construction — cap tenants per deployment or front the endpoint accordingly.

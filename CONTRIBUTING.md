@@ -54,18 +54,27 @@ cmd/orphan-sweeper/     # metadata/object reconciliation
 cmd/parquet-compactor/  # small-file merges
 internal/
   domain/               # pure domain types + sentinel errors (no I/O)
-  port/                 # interfaces (ContentStore port)
+  port/                 # interfaces (ContentStore, BlobStore ports)
   adapter/
-    postgres/           # pgx adapter (metadata + inline payload bytes)
+    postgres/           # pgx adapter (metadata, lifecycle queries)
     http/               # net/http REST adapter
+    grpc/               # gRPC service implementation
+    s3/                 # minio-go object adapter (incl. ranged reads)
+    parquet/            # Parquet file encode + ranged row reads
   config/               # environment-first configuration loading
   security/             # tenant context + audit log writer
-  storage/              # legacy in-memory tier router (superseded by adapter)
+  jobs/                 # runner, leadership, sweeps (disposition/integrity/sweeper/compactor)
+  jobsboot/             # job-process wiring (config + pool + blobs)
+  conformance/          # Design 1.26 suite + in-memory fake
+  observability/        # Prometheus metrics
 pkg/
   digest/               # SHA-256 helpers (sha256:<hex>)
   reference/            # v1 ContentReference encode/parse
+proto/content/v1/       # gRPC contract (buf codegen to gen/)
+gen/content/v1/         # generated protobuf/gRPC stubs (committed; see make proto)
 docs/                   # architecture, API, runbook, implementation plan
 configs/                # example YAML configs (local.yaml)
+certs/                  # dev-only mTLS material (gitignored; see make certs)
 migrations/             # PostgreSQL migrations (*.up.sql / *.down.sql)
 test/
   integration/          # testcontainers-based tests (build tag: integration)
@@ -122,7 +131,7 @@ Commit from status-verified-clean trees: run `git status` before staging and sta
 | ------------ | ----------------------------- | ------------------------ |
 | Domain core  | `go test`, table-driven       | 90%+                     |
 | Adapters     | `testcontainers-go`           | 80%+                     |
-| Conformance  | Custom harness                | All Core invariants      |
+| Conformance  | Custom harness                | All Core+Extended checks (14) |
 | Security     | Negative tests                | Cross-tenant, auth bypass|
 | Load         | `k6` or `vegeta`              | Target throughput        |
 

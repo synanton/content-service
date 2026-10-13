@@ -1,6 +1,7 @@
 # Content Service — Implementation Plan
 
-**Status:** Approved for Phase 0 implementation\
+**Status:** Plan of record (approved 2026-10-13); phases 0, 1, and most of 5 are complete —
+`docs/IMPLEMENTATION.md` is the living tracker and `CHANGELOG.md` the change record.\
 **Language:** Go 1.22+\
 **Date:** 2026-10-13
 
@@ -213,27 +214,39 @@
 ```text
 content-service/
   ├── cmd/
-  │   ├── content-api/           gRPC server main
-  │   ├── disposition-job/       Background disposition job
-  │   ├── integrity-job/         Background integrity verification
-  │   ├── orphan-sweeper/        Orphan reconciliation
-  │   └── parquet-compactor/     Parquet batch compaction
+  │   ├── content-api/           HTTP + gRPC server entrypoint
+  │   ├── disposition-job/       Expired-artifact disposition
+  │   ├── integrity-job/         Digest re-verification sweeps
+  │   ├── orphan-sweeper/        Metadata/object reconciliation
+  │   └── parquet-compactor/     Small-file merges
   ├── internal/
-  │   ├── api/                   gRPC service implementation
-  │   ├── metadata/              PostgreSQL metadata store
-  │   ├── storage/               Tier routing and payload storage
-  │   ├── retention/             Retention and lifecycle logic
-  │   ├── security/              Tenant authorization and audit
-  │   └── observability/         Metrics and tracing
+  │   ├── domain/                Pure types + sentinel errors (no I/O)
+  │   ├── port/                  ContentStore + BlobStore (+lister/reader) ports
+  │   ├── adapter/
+  │   │   ├── postgres/          pgx metadata + lifecycle queries
+  │   │   ├── http/              net/http REST adapter
+  │   │   ├── grpc/              gRPC service implementation
+  │   │   ├── s3/                minio-go object adapter
+  │   │   └── parquet/           Parquet file encode + ranged row reads
+  │   ├── config/                Environment-first configuration loading
+  │   ├── security/              Tenant context + audit log writer
+  │   ├── jobs/                  Runner, leadership, disposition/integrity/
+  │   │                          sweeper/compactor sweeps
+  │   ├── jobsboot/              Job-process wiring (config + pool + blobs)
+  │   ├── conformance/           Design 1.26 suite + in-memory fake
+  │   └── observability/         Prometheus metrics
   ├── pkg/
   │   ├── reference/             ContentReference format
-  │   ├── digest/                SHA-256 computation
-  │   └── config/                Configuration loading
-  ├── migrations/                SQL migrations
+  │   └── digest/                SHA-256 computation
+  ├── proto/content/v1/          gRPC contract (buf codegen to gen/)
+  ├── gen/content/v1/            Generated protobuf/gRPC stubs
+  ├── migrations/                SQL migrations (*.up.sql / *.down.sql)
+  ├── test/
+  │   └── integration/           testcontainers tests (build tag: integration)
   ├── tests/
-  │   ├── conformance/           Design 1.26 conformance tests
-  │   ├── integration/           End-to-end integration tests
-  │   └── security/              Security negative tests
+  │   └── conformance/           Design 1.26 conformance checks
+  ├── configs/                   Example YAML configs (local.yaml)
+  ├── certs/                     Dev-only mTLS material (gitignored)
   └── docs/                      Design and implementation docs
 ```
 
@@ -242,13 +255,15 @@ content-service/
 ## Dependency Direction
 
 ```text
-cmd/                     ←── no internal deps beyond internal/
+cmd/*                    ←── internal/* (wiring only, no logic)
      │
-internal/api             ←── internal/metadata, internal/storage
+internal/adapter/*       ←── internal/port, internal/domain, pkg/*
      │
-internal/metadata        ←── internal/api (gRPC client)
+internal/jobs            ←── internal/port, internal/domain, internal/observability
      │
-internal/storage         ←── internal/metadata (tier abstraction)
+internal/adapter/postgres←── additionally satisfies internal/jobs.LifecycleStore
+     │
+internal/domain, pkg/*   ←── standard library only (no I/O)
 ```
 
 ---
