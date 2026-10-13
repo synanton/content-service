@@ -68,4 +68,14 @@ var (
 		Name: "content_parquet_candidates",
 		Help: "Parquet-tier artifacts awaiting compaction, by tenant.",
 	}, []string{"tenant"})
+
+	ParquetMergedFiles = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "content_parquet_merged_files_total",
+		Help: "Small Parquet files merged away by the compactor, by tenant.",
+	}, []string{"tenant"})
+
+	ParquetMergedRows = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "content_parquet_merged_rows_total",
+		Help: "Rows carried into merged Parquet files, by tenant.",
+	}, []string{"tenant"})
 )

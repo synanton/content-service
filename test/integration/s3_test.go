@@ -114,7 +114,7 @@ func TestParquetTierUsesObjectStorage(t *testing.T) {
 	custom := *cfg
 	custom.Storage.InlineThresholdBytes = 100
 	custom.Storage.ObjectThresholdBytes = 1000
-	parquetStore := adapterpg.NewStore(pool, &custom, blobs)
+	parquetStore := adapterpg.NewStore(pool, &custom, blobs, rows)
 
 	tn := tenant()
 	payload := largePayload('d', 500)
@@ -162,7 +162,7 @@ func TestMissingObjectFailsClosed(t *testing.T) {
 }
 
 func TestMissingBlobStoreRejectsObjectTier(t *testing.T) {
-	bare := adapterpg.NewStore(pool, cfg, nil)
+	bare := adapterpg.NewStore(pool, cfg, nil, nil)
 	_, err := bare.Put(ctx, port.PutParams{
 		TenantID: tenant(), Payload: largePayload('f', 300*1024),
 		OwnerID: "owner-1", RetentionDays: 30,

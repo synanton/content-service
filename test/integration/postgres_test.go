@@ -20,6 +20,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	adapterpg "github.com/synanton/content-service/internal/adapter/postgres"
+	"github.com/synanton/content-service/internal/adapter/parquet"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/domain"
@@ -31,6 +32,7 @@ var (
 	pool  *pgxpool.Pool
 	store *adapterpg.Store
 	blobs port.BlobStore
+	rows  *parquet.Reader
 	cfg   *config.Config
 )
 
@@ -41,16 +43,18 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "integration setup:", err)
 		os.Exit(1)
 	}
-	blobs, err = startMinio(ctx)
+	s3store, err := startMinio(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "integration setup:", err)
 		os.Exit(1)
 	}
-	store = adapterpg.NewStore(pool, cfg, blobs)
+	blobs = s3store
+	rows = parquet.NewReader(s3store)
+	store = adapterpg.NewStore(pool, cfg, blobs, rows)
 	os.Exit(m.Run())
 }
 
-func startMinio(ctx context.Context) (port.BlobStore, error) {
+func startMinio(ctx context.Context) (*s3adapter.Store, error) {
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image: "minio/minio:latest",
@@ -118,6 +122,9 @@ func startPostgres(ctx context.Context) (*pgxpool.Pool, *config.Config, error) {
 	c.DB.MaxConnections = 10
 	c.Storage.InlineThresholdBytes = 4096
 	c.Storage.ObjectThresholdBytes = 262144
+	c.Storage.ParquetCompression = "snappy"
+	c.Storage.ParquetTargetRows = 1000
+	c.Storage.ParquetMaxFiles = 32
 	c.Retention.DefaultPolicyDays = 90
 	c.Retention.LegalHoldEnabled = true
 	c.Integrity.VerifyOnPublish = true

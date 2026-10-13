@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	contentv1 "github.com/synanton/content-service/gen/content/v1"
+	"github.com/synanton/content-service/internal/adapter/parquet"
 	"github.com/synanton/content-service/internal/adapter/postgres"
 	httphandler "github.com/synanton/content-service/internal/adapter/http"
 	grpchandler "github.com/synanton/content-service/internal/adapter/grpc"
@@ -55,13 +56,12 @@ func main() {
 		log.Printf("migrations applied")
 	}
 
-	var blobs port.BlobStore
-	blobs, err = dialObjectStore(ctx, cfg)
+	blobs, rows, err := dialObjectStore(ctx, cfg)
 	if err != nil {
 		log.Fatalf("object storage: %v", err)
 	}
 
-	store := postgres.NewStore(pool, cfg, blobs)
+	store := postgres.NewStore(pool, cfg, blobs, rows)
 	h := httphandler.NewHandler(store)
 
 	mux := http.NewServeMux()
@@ -130,7 +130,9 @@ func main() {
 	log.Printf("content-service stopped")
 }
 
-func dialObjectStore(ctx context.Context, cfg *config.Config) (port.BlobStore, error) {
+func dialObjectStore(
+	ctx context.Context, cfg *config.Config,
+) (port.BlobStore, *parquet.Reader, error) {
 	endpoint := cfg.S3.Endpoint
 	secure := strings.HasPrefix(endpoint, "https://")
 	endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
@@ -144,11 +146,11 @@ func dialObjectStore(ctx context.Context, cfg *config.Config) (port.BlobStore, e
 		PathStyle: cfg.S3.UsePathStyle,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := store.EnsureBucket(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	log.Printf("object storage ready: bucket %q at %s", cfg.S3.Bucket, cfg.S3.Endpoint)
-	return store, nil
+	return store, parquet.NewReader(store), nil
 }

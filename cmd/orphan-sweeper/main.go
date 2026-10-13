@@ -21,7 +21,7 @@ func main() {
 	}
 	defer env.Pool.Close()
 
-	store := postgres.NewStore(env.Pool, env.Config, env.Blobs)
+	store := postgres.NewStore(env.Pool, env.Config, env.Blobs, env.Rows)
 	sweep := &jobs.Sweeper{
 		Store:  store,
 		Blobs:  env.Blobs,

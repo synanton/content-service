@@ -119,10 +119,10 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 
 **Goal:** Operable service.
 
-- [x] Disposition, integrity, orphan-sweeper jobs (+ compactor inventory scaffold)
-- [ ] Real Parquet batching + compaction (needs parquet-go + read-path support)
+- [x] Disposition, integrity, orphan-sweeper jobs + real Parquet compaction
 - [ ] Multi-region S3
 - [x] Prometheus metrics endpoint (`/metrics` serves registered counters/histograms/gauges)
+- [x] Design 1.26 conformance suite (14 checks, fake + real wiring)
 - [ ] Dashboards
 - [ ] `docs/runbook.md` incident procedures exercised
 

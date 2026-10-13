@@ -20,6 +20,8 @@ storage:
   object_threshold_bytes: 262144
   parquet_batch_size: 1000
   parquet_compression: zstd
+  parquet_target_rows: 1000
+  parquet_max_files: 32
 
 retention:
   default_policy_days: 90

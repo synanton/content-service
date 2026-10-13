@@ -49,6 +49,8 @@ type StorageConfig struct {
 	ObjectThresholdBytes  int
 	ParquetBatchSize      int
 	ParquetCompression    string
+	ParquetTargetRows     int
+	ParquetMaxFiles       int
 }
 
 type RetentionConfig struct {
@@ -112,6 +114,8 @@ func Load() (*Config, error) {
 			ObjectThresholdBytes: getEnvInt("CONTENT_OBJECT_THRESHOLD_BYTES", 262144),
 			ParquetBatchSize:     getEnvInt("CONTENT_PARQUET_BATCH_SIZE", 1000),
 			ParquetCompression:   getEnv("CONTENT_PARQUET_COMPRESSION", "zstd"),
+			ParquetTargetRows:    getEnvInt("CONTENT_PARQUET_TARGET_ROWS", 1000),
+			ParquetMaxFiles:      getEnvInt("CONTENT_PARQUET_MAX_FILES", 32),
 		},
 		Retention: RetentionConfig{
 			DefaultPolicyDays:      getEnvInt("CONTENT_RETENTION_DEFAULT_DAYS", 90),
@@ -173,6 +177,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Storage.ObjectThresholdBytes <= c.Storage.InlineThresholdBytes {
 		return fmt.Errorf("object threshold must be greater than inline threshold")
+	}
+	if c.Storage.ParquetTargetRows <= 1 {
+		return fmt.Errorf("parquet target rows must exceed 1")
+	}
+	if c.Storage.ParquetMaxFiles < 2 {
+		return fmt.Errorf("parquet max files must be at least 2 (merging one file is a no-op)")
 	}
 	if c.Retention.DefaultPolicyDays < 0 {
 		return fmt.Errorf("default retention policy days must be non-negative")

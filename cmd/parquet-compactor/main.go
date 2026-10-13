@@ -21,8 +21,14 @@ func main() {
 	}
 	defer env.Pool.Close()
 
-	store := postgres.NewStore(env.Pool, env.Config, env.Blobs)
-	sweep := &jobs.Compactor{Store: store, Batch: env.Config.Jobs.BatchSize}
+	store := postgres.NewStore(env.Pool, env.Config, env.Blobs, env.Rows)
+	sweep := &jobs.Compactor{
+		Store:      store,
+		Blobs:      env.Blobs,
+		TargetRows: env.Config.Storage.ParquetTargetRows,
+		MaxFiles:   env.Config.Storage.ParquetMaxFiles,
+		Batch:      env.Config.Jobs.BatchSize,
+	}
 
 	runner := jobs.Runner{Name: "parquet-compactor", Interval: env.Config.Jobs.CompactorInterval,
 		Run: sweep.Sweep}

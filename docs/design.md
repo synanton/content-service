@@ -65,7 +65,7 @@ Payloads are routed by size at `put` time:
 
 ```text
 payload < inline_threshold       →  inline in Postgres (BYTEA)
-inline_threshold ≤ payload       →  append to Parquet batch on S3
+inline_threshold ≤ payload       →  Parquet file on S3 (indexed by row)
   < object_threshold
 payload ≥ object_threshold       →  individual S3 object
 ```
@@ -73,6 +73,15 @@ payload ≥ object_threshold       →  individual S3 object
 Default thresholds:
 - `inline_threshold`: 4096 bytes (4 KiB)
 - `object_threshold`: 262144 bytes (256 KiB)
+
+Each `parquet`-tier put writes one immutable single-row Parquet file
+(`parquet/<tenant>/<uuid>.parquet`, snappy by default) and records its
+id plus row index on the artifact row. The compactor merges files below
+`parquet_target_rows` (default 1000, at most `parquet_max_files` per run
+per tenant), repoints artifact rows by exact row offset, and deletes the
+old files; every crash window heals via the orphan sweeper. Reads fetch
+single rows with ranged S3 GETs — never full downloads. Rows written
+before file pointers existed fall back to per-artifact objects.
 
 Thresholds are configurable via environment variables or configuration
 file. The tier selection is an implementation detail — the

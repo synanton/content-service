@@ -23,14 +23,14 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 | Area | Implemented | Unit/integration tested | Conformance-validated | Benchmark-validated |
 |---|---|---|---|---|
 | Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core) | ⬜ |
-| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core suite) | ⬜ |
+| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core+Extended suite) | ⬜ |
 | HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ⬜ |
 | gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ⬜ |
 | Reference registry (register/release) | ✅ | ✅ | ✅ (Core suite) | ⬜ |
 | Legal hold + audit trail | ✅ | ✅ | ✅ (Core suite) | ⬜ |
 | S3/MinIO backing for object tiers | ✅ | ✅ (testcontainers minio) | ⬜ | ⬜ |
 | Background jobs (disposition, integrity, orphan sweeper) | ✅ | ✅ (testcontainers) | ⬜ | ⬜ |
-| Parquet compaction | ⬜ (inventory only) | ✅ (non-destructive) | ⬜ | ⬜ |
+| Parquet compaction (merge small files) | ✅ | ✅ (testcontainers) | ⬜ | ⬜ |
 
 `⬜` = not yet; nothing in this table is claimed before its evidence exists.
 
@@ -244,7 +244,7 @@ Standard-library `log` today. Set container log level via the platform's log dri
 | `disposition-job` | Single leader (advisory lock) | Expired artifacts → check refs and legal holds → delete row first, then blob |
 | `integrity-job` | Sharded by tenant (hash mod) | Re-read payloads, verify digests, audit on mismatch (no auto-quarantine yet) |
 | `orphan-sweeper` | Single leader (advisory lock) | Metadata-without-payload: audit only. Payload-without-metadata: delete after grace (dry-run supported) |
-| `parquet-compactor` | Inventory only | Report parquet-tier backlog; real merging needs parquet-go + read-path support |
+| `parquet-compactor` | Merge small files | Merge sub-target files per tenant (oldest first), repoint rows by offset, delete old files/objects; every crash window heals via the orphan sweeper |
 
 Run locally under the `jobs` profile (plain `up` stays API-only):
 

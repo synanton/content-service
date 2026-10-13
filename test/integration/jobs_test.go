@@ -211,7 +211,7 @@ func TestCompactorIsNonDestructive(t *testing.T) {
 	custom := *cfg
 	custom.Storage.InlineThresholdBytes = 100
 	custom.Storage.ObjectThresholdBytes = 100000
-	parquetStore := adapterpg.NewStore(pool, &custom, blobs)
+	parquetStore := adapterpg.NewStore(pool, &custom, blobs, rows)
 	tn := tenant()
 	res, err := parquetStore.Put(ctx, port.PutParams{
 		TenantID: tn, Payload: largePayload('v', 5000), OwnerID: "owner-1", RetentionDays: 30,

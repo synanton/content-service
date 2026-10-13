@@ -51,6 +51,8 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 | `CONTENT_SERVER_PORT` | `8080` | HTTP listen port |
 | `CONTENT_GRPC_PORT` | `50051` | gRPC listen port (reflection enabled) |
 | `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | Object storage credentials (dev defaults; production mounts from the secret store) |
+| `CONTENT_PARQUET_TARGET_ROWS` | `1000` | Files below this row count are merge candidates |
+| `CONTENT_PARQUET_MAX_FILES` | `32` | Max files merged per compactor run per tenant |
 | `CONTENT_API_KEY` | — (empty) | Required by Compose; reserved for gateway auth (not yet enforced) |
 | `CONTENT_MIGRATE_ON_STARTUP` | `false` | Opt-in; explicit false vetoes migration |
 | `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |
@@ -75,7 +77,7 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 | Failure | Symptom | Response |
 |---|---|---|
 | Postgres down | `/readyz` 503, puts/gets 500 | Restore Postgres; no data loss (writes fail fast, nothing half-persisted) |
-| MinIO/S3 down | No Phase 1 impact (bytes stay in Postgres) | Restore MinIO before enabling the S3 tier |
+| MinIO/S3 down | Inline puts/gets keep working; `parquet`/`s3` puts fail fast and their gets fail closed | Restore MinIO; no metadata corruption (failed puts leave no half-persisted rows) |
 | Digest mismatch on read | `409 INTEGRITY_MISMATCH` | Quarantine artifact, alert; do not serve bytes |
 | Cross-tenant probe | `404 NOT_FOUND` (indistinguishable) | Expected; alert only on volume anomaly |
 | Legal hold in place | Disposition skipped for held artifacts | Release requires `content.admin.legal_hold` role + reason; audited |
@@ -101,7 +103,7 @@ Run under the Compose `jobs` profile (`docker compose --profile jobs up -d`); pl
 - Disposition deletes the database row first, then the blob; a crash between the two leaves an orphan blob the sweeper heals. Metadata rows whose bytes are missing are audited, never auto-deleted.
 - The sweeper honors `CONTENT_ORPHAN_DRY_RUN=true` (log candidates, delete nothing).
 
-`markForDeletion` releases one owner's reference row (`released_at = now()`). Physical deletion additionally requires ref count zero, no legal hold, and grace-period expiry (background jobs land in Phase 5).
+`markForDeletion` releases one owner's reference row (`released_at = now()`). Physical deletion additionally requires ref count zero, no legal hold, and grace-period expiry, enforced by `disposition-job`. Parquet file rows left unreferenced are reaped in the same transaction; their objects are collected by the orphan sweeper.
 
 ## 7. Migrations
 
@@ -109,4 +111,4 @@ Files: `migrations/000001_create_artifacts.{up,down}.sql` through `000004_create
 
 ## 8. Observability
 
-Structured logs via the standard library `log` package today. Prometheus wiring lands in Phase 5; the `/metrics` endpoint currently serves a placeholder. Per-request fields to expect once wired: `tenant_id`, tier, latency histograms for put/get, integrity-failure counters, orphan-candidate gauges.
+Structured logs via the standard library `log` package today. `/metrics` serves Prometheus counters, histograms, and gauges (put/get latency and errors by tenant and tier, integrity failures, disposition/orphan/parquet-compaction signals). Cardinality note: `tenant_id` labels are unbounded by construction — cap tenants per deployment or front the endpoint accordingly.
