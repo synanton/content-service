@@ -75,16 +75,15 @@ func (s *Sweeper) sweepOrphanBlobs(ctx context.Context, lister port.BlobLister) 
 	cutoff := time.Now().UTC().Add(-s.Grace)
 	counts := map[string]int{}
 	for _, obj := range objects {
-		tenant, hex, ok := splitKey(obj.Key)
-		if !ok {
-			logf("sweeper: skipping foreign key shape %q", obj.Key)
+		live, tenant, err := s.referenced(ctx, obj.Key)
+		if err != nil {
+			return err
+		}
+		if live || obj.ModifiedAt.After(cutoff) {
 			continue
 		}
-		exists, err := s.Store.ArtifactExistsByDigest(ctx, tenant, "sha256:"+hex)
-		if err != nil {
-			return fmt.Errorf("sweeper: artifact lookup %s: %w", obj.Key, err)
-		}
-		if exists || obj.ModifiedAt.After(cutoff) {
+		if tenant == "" {
+			logf("sweeper: skipping foreign key shape %q", obj.Key)
 			continue
 		}
 		counts[tenant]++
@@ -101,6 +100,41 @@ func (s *Sweeper) sweepOrphanBlobs(ctx context.Context, lister port.BlobLister) 
 		observability.OrphanCandidates.WithLabelValues(tenant, "blob").Set(float64(n))
 	}
 	return nil
+}
+
+// referenced reports whether an object key is live and, when the key shape
+// is recognized, which tenant it belongs to. Unknown shapes return
+// ("", tenant="", nil) so callers skip rather than delete foreign data.
+func (s *Sweeper) referenced(ctx context.Context, key string) (live bool, tenant string, err error) {
+	if fileTenant, file, ok := splitParquetKey(key); ok {
+		live, err := s.Store.ParquetFileKeyExists(ctx, key)
+		if err != nil {
+			return false, "", fmt.Errorf("sweeper: parquet lookup %s: %w", key, err)
+		}
+		_ = file
+		return live, fileTenant, nil
+	}
+	tenant, hex, ok := splitKey(key)
+	if !ok {
+		return false, "", nil
+	}
+	live, err = s.Store.ArtifactExistsByDigest(ctx, tenant, "sha256:"+hex)
+	if err != nil {
+		return false, "", fmt.Errorf("sweeper: artifact lookup %s: %w", key, err)
+	}
+	return live, tenant, nil
+}
+
+func splitParquetKey(key string) (tenant, file string, ok bool) {
+	tenant, rest, found := strings.Cut(key, "/")
+	if !found || tenant != "parquet" {
+		return "", "", false
+	}
+	owner, name, found := strings.Cut(rest, "/")
+	if !found || owner == "" || !strings.HasSuffix(name, ".parquet") || strings.Contains(name, "/") {
+		return "", "", false
+	}
+	return owner, name, true
 }
 
 func splitKey(key string) (tenant, hex string, ok bool) {

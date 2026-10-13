@@ -47,7 +47,11 @@ make proto
 ## Repository Layout
 
 ```text
-cmd/content-api/        # HTTP server entrypoint (gRPC lands in a later phase)
+cmd/content-api/        # HTTP + gRPC server entrypoint
+cmd/disposition-job/    # expired-artifact disposition
+cmd/integrity-job/      # digest re-verification sweeps
+cmd/orphan-sweeper/     # metadata/object reconciliation
+cmd/parquet-compactor/  # small-file merges
 internal/
   domain/               # pure domain types + sentinel errors (no I/O)
   port/                 # interfaces (ContentStore port)

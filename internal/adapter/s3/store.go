@@ -160,6 +160,45 @@ func (s *Store) Bucket() string {
 	return s.bucket
 }
 
+// Size returns the object size without fetching bytes.
+func (s *Store) Size(ctx context.Context, key string) (int64, error) {
+	if key == "" {
+		return 0, fmt.Errorf("s3: key is required")
+	}
+	info, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		if isNotFound(err) {
+			return 0, fmt.Errorf("s3: %q: %w", key, errNotFound(key))
+		}
+		return 0, fmt.Errorf("s3: stat %q: %w", key, err)
+	}
+	return info.Size, nil
+}
+
+// Range fetches [offset, offset+length) bytes for row-level Parquet reads.
+func (s *Store) Range(ctx context.Context, key string, offset, length int64) ([]byte, error) {
+	if key == "" {
+		return nil, fmt.Errorf("s3: key is required")
+	}
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("s3: invalid range %d+%d for %q", offset, length, key)
+	}
+	opts := minio.GetObjectOptions{}
+	if err := opts.SetRange(offset, offset+length-1); err != nil {
+		return nil, fmt.Errorf("s3: range %q: %w", key, err)
+	}
+	obj, err := s.client.GetObject(ctx, s.bucket, key, opts)
+	if err != nil {
+		return nil, fmt.Errorf("s3: get range %q: %w", key, err)
+	}
+	defer obj.Close()
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		return nil, fmt.Errorf("s3: read range %q: %w", key, err)
+	}
+	return data, nil
+}
+
 // List enumerates objects under prefix for reconciliation scans.
 func (s *Store) List(ctx context.Context, prefix string) ([]port.BlobInfo, error) {
 	var out []port.BlobInfo

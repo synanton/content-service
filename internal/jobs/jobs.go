@@ -38,13 +38,34 @@ type ParquetCandidate struct {
 // Implemented by the postgres adapter; faked in job unit tests.
 type LifecycleStore interface {
 	ListDispositionCandidates(ctx context.Context, cutoff time.Time, limit int) ([]ExpiredCandidate, error)
-	DisposeArtifact(ctx context.Context, tenantID, artifactID, actor string) (digest, tier string, deleted bool, err error)
+	DisposeArtifact(ctx context.Context, tenantID, artifactID, actor string) (DisposedArtifact, bool, error)
 	ListTenants(ctx context.Context) ([]string, error)
 	ListArtifactIDs(ctx context.Context, tenantID string, limit int, sampleRate float64) ([]string, error)
 	RecordIntegrityFailure(ctx context.Context, tenantID, artifactID, detail string) error
 	ListExternalArtifacts(ctx context.Context, limit int) ([]ExternalArtifact, error)
 	ArtifactExistsByDigest(ctx context.Context, tenantID, digest string) (bool, error)
 	ListParquetCandidates(ctx context.Context, limit int) ([]ParquetCandidate, error)
+	ListSmallParquetFiles(ctx context.Context, tenantID string, maxRows, limit int) ([]ParquetFile, error)
+	InsertParquetFile(ctx context.Context, file ParquetFile) error
+	SwapParquetFilePointers(ctx context.Context, tenantID, oldFileID, newFileID string, rowOffset int64) error
+	DeleteParquetFile(ctx context.Context, fileID string) error
+	ParquetFileKeyExists(ctx context.Context, key string) (bool, error)
+}
+
+// DisposedArtifact describes a physically disposed artifact for blob cleanup.
+type DisposedArtifact struct {
+	Digest   string
+	Tier     string
+	FileKey  string
+}
+
+// ParquetFile is one immutable Parquet file tracked in metadata.
+type ParquetFile struct {
+	FileID string
+	Tenant string
+	Key    string
+	Rows   int
+	Bytes  int64
 }
 
 // Runner executes a job immediately and then on every tick until ctx ends.

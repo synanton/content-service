@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/synanton/content-service/internal/adapter/parquet"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/port"
@@ -20,6 +21,7 @@ type Env struct {
 	Config *config.Config
 	Pool   *pgxpool.Pool
 	Blobs  port.BlobStore
+	Rows   *parquet.Reader
 }
 
 // Setup loads config, connects Postgres, pings it, and ensures the bucket.
@@ -42,10 +44,10 @@ func Setup(ctx context.Context) (*Env, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &Env{Config: cfg, Pool: pool, Blobs: blobs}, nil
+	return &Env{Config: cfg, Pool: pool, Blobs: blobs, Rows: parquet.NewReader(blobs)}, nil
 }
 
-func dialBlobs(ctx context.Context, cfg *config.Config) (port.BlobStore, error) {
+func dialBlobs(ctx context.Context, cfg *config.Config) (*s3adapter.Store, error) {
 	endpoint := cfg.S3.Endpoint
 	secure := strings.HasPrefix(endpoint, "https://")
 	endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")

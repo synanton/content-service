@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/synanton/content-service/internal/adapter/parquet"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/port"
@@ -22,13 +23,16 @@ type Store struct {
 	pool  *pgxpool.Pool
 	cfg   *config.Config
 	blobs port.BlobStore
+	rows  *parquet.Reader
 }
 
 // NewStore wires the metadata database with the object tier. A nil blobs
 // keeps the legacy behavior (payload bytes in Postgres for every tier);
 // pass a real BlobStore to persist object-tier bytes in S3/MinIO.
-func NewStore(pool *pgxpool.Pool, cfg *config.Config, blobs port.BlobStore) *Store {
-	return &Store{pool: pool, cfg: cfg, blobs: blobs}
+// A nil rows reader disables Parquet-file reads; artifacts carrying file
+// pointers then fail closed until a reader is wired.
+func NewStore(pool *pgxpool.Pool, cfg *config.Config, blobs port.BlobStore, rows *parquet.Reader) *Store {
+	return &Store{pool: pool, cfg: cfg, blobs: blobs, rows: rows}
 }
 
 // BlobKey derives the content-addressed object key. The digest already
@@ -98,6 +102,8 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 
 	artifactID = uuid.NewString()
 	var inline []byte
+	var fileID, fileKey string
+	var rowIdx int64
 	if tier == "inline" {
 		inline = p.Payload
 	} else {
@@ -105,7 +111,23 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 			return nil, fmt.Errorf("tier %s requires object storage: %w",
 				tier, domain.ErrInvalidArgument)
 		}
-		if err := s.blobs.Put(ctx, blobKey(p.TenantID, computed), p.Payload, p.ContentType); err != nil {
+		if tier == "parquet" {
+			fileID = uuid.NewString()
+			fileKey = "parquet/" + p.TenantID + "/" + fileID + ".parquet"
+			fileBytes, err := parquet.EncodeAll([]parquet.Row{{
+				TenantID:   p.TenantID,
+				ArtifactID: artifactID,
+				Digest:     computed,
+				Content:    p.Payload,
+			}}, s.cfg.Storage.ParquetCompression)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.blobs.Put(ctx, fileKey, fileBytes, "application/x-parquet"); err != nil {
+				return nil, err
+			}
+			rowIdx = 0
+		} else if err := s.blobs.Put(ctx, blobKey(p.TenantID, computed), p.Payload, p.ContentType); err != nil {
 			return nil, err
 		}
 	}
@@ -115,14 +137,25 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 	}
 	defer tx.Rollback(ctx)
 
+	if fileID != "" {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO parquet_files (file_id, tenant_id, s3_key, record_count, size_bytes)
+			VALUES ($1::uuid, $2, $3, 1, $4)`,
+			fileID, p.TenantID, fileKey, len(p.Payload),
+		); err != nil {
+			return nil, fmt.Errorf("insert parquet file: %w", err)
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO artifacts
 			(tenant_id, artifact_id, digest, generation, serializer_version,
-			 content_type, size_bytes, storage_tier, payload, expires_at)
-		VALUES ($1, $2::uuid, $3, 1, $4, $5, $6, $7, $8, $9)
+			 content_type, size_bytes, storage_tier, payload, expires_at,
+			 parquet_file_id, parquet_row_idx)
+		VALUES ($1, $2::uuid, $3, 1, $4, $5, $6, $7, $8, $9, $10::uuid, $11)
 		ON CONFLICT DO NOTHING`,
 		p.TenantID, artifactID, computed, p.SerializerVersion,
 		p.ContentType, len(p.Payload), tier, inline, expiresAt,
+		nullUUID(fileID), rowIdx,
 	); err != nil {
 		return nil, fmt.Errorf("insert artifact: %w", err)
 	}
@@ -169,7 +202,17 @@ func (s *Store) Get(ctx context.Context, tenantID, artifactID string) ([]byte, *
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(payload) == 0 {
+	switch {
+	case art.ParquetFileKey != "":
+		if s.rows == nil {
+			return nil, nil, fmt.Errorf("parquet reader not configured: %w", domain.ErrIntegrityMismatch)
+		}
+		row, err := s.rows.ReadRow(ctx, art.ParquetFileKey, art.ParquetRow)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch parquet row: %w", err)
+		}
+		payload = row.Content
+	case len(payload) == 0 && art.StorageTier != "inline":
 		if s.blobs == nil {
 			return nil, nil, domain.ErrIntegrityMismatch
 		}
@@ -323,21 +366,33 @@ func (s *Store) loadArtifactWithPayload(ctx context.Context, tenantID, artifactI
 	var art domain.Artifact
 	var payload []byte
 	var expires interface{}
+	var fileKey *string
+	var rowIdx *int64
 	err := s.pool.QueryRow(ctx, `
-		SELECT tenant_id, artifact_id::text, digest, generation, serializer_version,
-		       COALESCE(content_type, ''), size_bytes, storage_tier, payload, created_at, expires_at
-		FROM artifacts WHERE tenant_id = $1 AND artifact_id = $2::uuid`,
+		SELECT a.tenant_id, a.artifact_id::text, a.digest, a.generation, a.serializer_version,
+		       COALESCE(a.content_type, ''), a.size_bytes, a.storage_tier, a.payload, a.created_at, a.expires_at,
+		       f.s3_key, a.parquet_row_idx
+		FROM artifacts a
+		LEFT JOIN parquet_files f ON f.file_id = a.parquet_file_id
+		WHERE a.tenant_id = $1 AND a.artifact_id = $2::uuid`,
 		tenantID, artifactID,
 	).Scan(
 		&art.TenantID, &art.ArtifactID, &art.Digest, &art.Generation,
 		&art.SerializerVersion, &art.ContentType, &art.SizeBytes,
 		&art.StorageTier, &payload, &art.CreatedAt, &expires,
+		&fileKey, &rowIdx,
 	)
 	if err != nil {
 		if isNoRows(err) {
 			return nil, nil, domain.ErrNotFound
 		}
 		return nil, nil, fmt.Errorf("load artifact: %w", err)
+	}
+	if fileKey != nil {
+		art.ParquetFileKey = *fileKey
+	}
+	if rowIdx != nil {
+		art.ParquetRow = *rowIdx
 	}
 	return &art, payload, nil
 }
@@ -347,6 +402,13 @@ func ownerOrDefault(owner string) string {
 		return "unknown"
 	}
 	return owner
+}
+
+func nullUUID(id string) interface{} {
+	if id == "" {
+		return nil
+	}
+	return id
 }
 
 func isNoRows(err error) bool {

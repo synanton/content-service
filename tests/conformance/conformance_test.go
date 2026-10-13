@@ -20,6 +20,8 @@ func TestServerStartsWithValidConfig(t *testing.T) {
 		Storage: config.StorageConfig{
 			InlineThresholdBytes: 4096,
 			ObjectThresholdBytes: 262144,
+			ParquetTargetRows:    1000,
+			ParquetMaxFiles:      32,
 		},
 		Retention: config.RetentionConfig{
 			DefaultPolicyDays: 90,

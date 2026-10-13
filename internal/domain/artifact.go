@@ -25,6 +25,11 @@ type Artifact struct {
 	StorageTier       string
 	CreatedAt         time.Time
 	ExpiresAt         *time.Time
+	// ParquetFileKey and ParquetRow locate the payload inside a merged
+	// Parquet file. Empty key means the legacy per-artifact object
+	// (BlobKey) or inline bytes, depending on the tier.
+	ParquetFileKey string
+	ParquetRow     int64
 }
 
 type RetentionPolicy struct {

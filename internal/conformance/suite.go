@@ -31,6 +31,10 @@ func Verify(t *testing.T, store port.ContentStore) {
 	t.Run("RegisterRelease", func(t *testing.T) { checkRegisterRelease(t, ctx, store) })
 	t.Run("LegalHoldGates", func(t *testing.T) { checkLegalHoldGates(t, ctx, store) })
 	t.Run("RetentionValidation", func(t *testing.T) { checkRetentionValidation(t, ctx, store) })
+	t.Run("TierRecorded", func(t *testing.T) { checkTierRecorded(t, ctx, store) })
+	t.Run("ReleaseVsRetention", func(t *testing.T) { checkReleaseVsRetention(t, ctx, store) })
+	t.Run("HeadConsistency", func(t *testing.T) { checkHeadConsistency(t, ctx, store) })
+	t.Run("RegisterIdempotent", func(t *testing.T) { checkRegisterIdempotent(t, ctx, store) })
 }
 
 func tenant(t *testing.T) string {
@@ -214,6 +218,67 @@ func checkLegalHoldGates(t *testing.T, ctx context.Context, store port.ContentSt
 	}
 	if err := store.SetLegalHold(ctx, tenantID, res.Artifact.ArtifactID, false, "admin-1", "closed"); err != nil {
 		t.Fatalf("release hold: %v", err)
+	}
+}
+
+// TierRecorded: small payloads stay inline; every recorded tier is known.
+func checkTierRecorded(t *testing.T, ctx context.Context, store port.ContentStore) {
+	t.Helper()
+	tenantID := tenant(t)
+	res := mustPut(t, ctx, store, tenantID, []byte("tiny"))
+	if res.Artifact.StorageTier != "inline" {
+		t.Fatalf("small payload tier = %s, want inline", res.Artifact.StorageTier)
+	}
+	switch res.Artifact.StorageTier {
+	case "inline", "parquet", "s3":
+	default:
+		t.Fatalf("unknown storage tier %q", res.Artifact.StorageTier)
+	}
+}
+
+// ReleaseVsRetention: releasing every owner never deletes the artifact.
+// Retention and disposition own deletion, not reference release.
+func checkReleaseVsRetention(t *testing.T, ctx context.Context, store port.ContentStore) {
+	t.Helper()
+	tenantID := tenant(t)
+	res := mustPut(t, ctx, store, tenantID, []byte("released but retained"))
+	if err := store.MarkForDeletion(ctx, tenantID, res.Artifact.ArtifactID, "owner-1"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if err := store.ReleaseReference(ctx, tenantID, res.Artifact.Digest, "owner-1"); err != nil {
+		t.Fatalf("release reference: %v", err)
+	}
+	if _, _, err := store.Get(ctx, tenantID, res.Artifact.ArtifactID); err != nil {
+		t.Fatalf("fully released artifact must stay readable: %v", err)
+	}
+}
+
+// HeadConsistency: exists agrees with put; unknown ids report absent.
+func checkHeadConsistency(t *testing.T, ctx context.Context, store port.ContentStore) {
+	t.Helper()
+	tenantID := tenant(t)
+	res := mustPut(t, ctx, store, tenantID, []byte("head probe"))
+	if ok, err := store.Exists(ctx, tenantID, res.Artifact.ArtifactID); err != nil || !ok {
+		t.Fatalf("exists = %v, %v; want true, nil", ok, err)
+	}
+	if ok, err := store.Exists(ctx, tenantID, "00000000-0000-0000-0000-000000000000"); err != nil || ok {
+		t.Fatalf("exists unknown = %v, %v; want false, nil", ok, err)
+	}
+}
+
+// RegisterIdempotent: double registration is safe and re-arms release.
+func checkRegisterIdempotent(t *testing.T, ctx context.Context, store port.ContentStore) {
+	t.Helper()
+	tenantID := tenant(t)
+	res := mustPut(t, ctx, store, tenantID, []byte("register probe"))
+	if err := store.RegisterReference(ctx, tenantID, res.Artifact.Digest, "owner-9"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := store.RegisterReference(ctx, tenantID, res.Artifact.Digest, "owner-9"); err != nil {
+		t.Fatalf("double register must be safe: %v", err)
+	}
+	if err := store.ReleaseReference(ctx, tenantID, res.Artifact.Digest, "owner-9"); err != nil {
+		t.Fatalf("release: %v", err)
 	}
 }
 

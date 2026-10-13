@@ -34,7 +34,7 @@ func (d *Disposition) Sweep(ctx context.Context) error {
 		return fmt.Errorf("disposition: list candidates: %w", err)
 	}
 	for _, c := range candidates {
-		digest, tier, deleted, err := d.Store.DisposeArtifact(ctx, c.TenantID, c.ArtifactID, "system/disposition")
+		disposed, deleted, err := d.Store.DisposeArtifact(ctx, c.TenantID, c.ArtifactID, "system/disposition")
 		if err != nil {
 			return fmt.Errorf("disposition: dispose %s/%s: %w", c.TenantID, c.ArtifactID, err)
 		}
@@ -43,8 +43,18 @@ func (d *Disposition) Sweep(ctx context.Context) error {
 			continue
 		}
 		observability.DispositionDeleted.WithLabelValues(c.TenantID).Inc()
-		if tier != "inline" && d.Blobs != nil {
-			if err := d.Blobs.Delete(ctx, blobObjectKey(c.TenantID, digest)); err != nil {
+		if d.Blobs == nil {
+			continue
+		}
+		key := ""
+		switch {
+		case disposed.FileKey != "":
+			key = disposed.FileKey
+		case disposed.Tier != "inline":
+			key = blobObjectKey(c.TenantID, disposed.Digest)
+		}
+		if key != "" {
+			if err := d.Blobs.Delete(ctx, key); err != nil {
 				logf("disposition: blob cleanup %s/%s failed (orphan sweeper heals): %v",
 					c.TenantID, c.ArtifactID, err)
 			}
