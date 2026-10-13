@@ -2,6 +2,19 @@
 
 Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per version. Normative behavior lives in the approved integration proposal v3 — this file records what changed, the proposal records why.
 
+## [Unreleased]
+
+### Added
+
+- S3/MinIO backing for `parquet` and `s3` tiers (`BlobStore` port + minio adapter, content-addressed keys `<tenant>/<digest-hex>`, bucket auto-creation on startup). Postgres keeps inline bytes; object-tier rows store `payload NULL` and remain readable alongside legacy inline rows.
+- gRPC surface (`content.v1.ContentService`: Put/Get/Head/Capabilities, server reflection) on `:50051` alongside the REST API; `proto/content/v1/content.proto` is the contract, `gen/` holds buf-generated stubs.
+- `make proto` regenerates stubs (buf + protoc-gen-go + protoc-gen-go-grpc required).
+
+### Changed
+
+- `CONTENT_GRPC_PORT` (default 50051), `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` configuration.
+- Go directive stays `go 1.22`; new dependencies pinned to go1.22-compatible versions (minio-go v7.0.77, grpc v1.67.3, protobuf v1.36.5).
+
 ## [0.1.0] - 2026-10-13
 
 First milestone. Pre-alpha: API unstable, deployable locally, integration-tested.

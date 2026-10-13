@@ -4,17 +4,25 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
+	contentv1 "github.com/synanton/content-service/gen/content/v1"
 	"github.com/synanton/content-service/internal/adapter/postgres"
 	httphandler "github.com/synanton/content-service/internal/adapter/http"
+	grpchandler "github.com/synanton/content-service/internal/adapter/grpc"
+	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
+	"github.com/synanton/content-service/internal/port"
 )
 
 var version = "dev"
@@ -46,7 +54,13 @@ func main() {
 		log.Printf("migrations applied")
 	}
 
-	store := postgres.NewStore(pool, cfg)
+	var blobs port.BlobStore
+	blobs, err = dialObjectStore(ctx, cfg)
+	if err != nil {
+		log.Fatalf("object storage: %v", err)
+	}
+
+	store := postgres.NewStore(pool, cfg, blobs)
 	h := httphandler.NewHandler(store)
 
 	mux := http.NewServeMux()
@@ -74,14 +88,27 @@ func main() {
 		_, _ = fmt.Fprintln(w, "# content-service metrics (prometheus wiring lands in Phase 5)")
 	})
 
+	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.GrpcPort))
+	if err != nil {
+		log.Fatalf("grpc listen: %v", err)
+	}
+	grpcSrv := grpc.NewServer()
+	contentv1.RegisterContentServiceServer(grpcSrv, grpchandler.NewServer(store))
+	reflection.Register(grpcSrv)
+
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
-	log.Printf("content-service %s listening on %s", version, addr)
+	log.Printf("content-service %s listening on %s (http) and %s (grpc)", version, addr, grpcLis.Addr())
 
 	errCh := make(chan error, 1)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	go func() {
+		if err := grpcSrv.Serve(grpcLis); err != nil {
 			errCh <- err
 		}
 	}()
@@ -96,10 +123,34 @@ func main() {
 		log.Printf("signal %v: draining", sig)
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
+		grpcSrv.GracefulStop()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			log.Fatalf("shutdown: %v", err)
 		}
 	}
 
 	log.Printf("content-service stopped")
+}
+
+func dialObjectStore(ctx context.Context, cfg *config.Config) (port.BlobStore, error) {
+	endpoint := cfg.S3.Endpoint
+	secure := strings.HasPrefix(endpoint, "https://")
+	endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
+	store, err := s3adapter.NewStore(s3adapter.Config{
+		Endpoint:  endpoint,
+		Bucket:    cfg.S3.Bucket,
+		Region:    cfg.S3.Region,
+		AccessKey: cfg.S3.AccessKey,
+		SecretKey: cfg.S3.SecretKey,
+		UseSSL:    secure,
+		PathStyle: cfg.S3.UsePathStyle,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := store.EnsureBucket(ctx); err != nil {
+		return nil, err
+	}
+	log.Printf("object storage ready: bucket %q at %s", cfg.S3.Bucket, cfg.S3.Endpoint)
+	return store, nil
 }

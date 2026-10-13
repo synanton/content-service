@@ -25,9 +25,11 @@ type DBConfig struct {
 }
 
 type S3Config struct {
-	Endpoint    string
-	Bucket      string
-	Region      string
+	Endpoint     string
+	Bucket       string
+	Region       string
+	AccessKey    string
+	SecretKey    string
 	UsePathStyle bool
 }
 
@@ -74,6 +76,7 @@ type ObservabilityConfig struct {
 type ServerConfig struct {
 	Port             int
 	Host             string
+	GrpcPort         int
 	APIKey           string
 	MigrateOnStartup bool
 	MigrationsDir    string
@@ -89,6 +92,8 @@ func Load() (*Config, error) {
 			Endpoint:     getEnv("CONTENT_S3_ENDPOINT", "http://localhost:9000"),
 			Bucket:       getEnv("CONTENT_S3_BUCKET", "synanton-content"),
 			Region:       getEnv("CONTENT_S3_REGION", "us-east-1"),
+			AccessKey:    getEnv("CONTENT_S3_ACCESS_KEY", "minioadmin"),
+			SecretKey:    getEnv("CONTENT_S3_SECRET_KEY", "minioadmin"),
 			UsePathStyle: getEnvBool("CONTENT_S3_USE_PATH_STYLE", true),
 		},
 		Storage: StorageConfig{
@@ -128,6 +133,7 @@ func Load() (*Config, error) {
 		Server: ServerConfig{
 			Host:             getEnv("CONTENT_SERVER_HOST", "0.0.0.0"),
 			Port:             getEnvInt("CONTENT_SERVER_PORT", 8080),
+			GrpcPort:         getEnvInt("CONTENT_GRPC_PORT", 50051),
 			APIKey:           getEnv("CONTENT_API_KEY", ""),
 			MigrateOnStartup: getEnvBool("CONTENT_MIGRATE_ON_STARTUP", false),
 			MigrationsDir:    getEnv("CONTENT_MIGRATIONS_DIR", "migrations"),

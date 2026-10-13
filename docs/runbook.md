@@ -35,8 +35,8 @@ Startup order (fail-fast — any step failing exits 1 before listeners bind):
 
 1. Config resolve (env first, `configs/local.yaml` as reference; `internal/config/config.go`).
 2. Optional migrate (`CONTENT_MIGRATE_ON_STARTUP=true`): applies `migrations/*.up.sql` in lexical order via `internal/adapter/postgres.Migrate`, then continues. See §7.
-3. Readiness probe (DB ping) — must pass before bind.
-4. Listener bind (`CONTENT_SERVER_HOST`/`CONTENT_SERVER_PORT`, default `0.0.0.0:8080`) → serving.
+3. Readiness probes (DB ping, S3 bucket ensure) — must pass before bind.
+4. Listener bind (HTTP `CONTENT_SERVER_HOST`/`CONTENT_SERVER_PORT`, default `0.0.0.0:8080`; gRPC `CONTENT_GRPC_PORT`, default `50051`) → serving.
 
 ## 2. Shutdown
 
@@ -49,6 +49,8 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 | `CONTENT_DB_URL` | `postgres://localhost:5432/content?sslmode=disable` | Postgres DSN; must reach the metadata database |
 | `CONTENT_SERVER_HOST` | `0.0.0.0` | HTTP listen host |
 | `CONTENT_SERVER_PORT` | `8080` | HTTP listen port |
+| `CONTENT_GRPC_PORT` | `50051` | gRPC listen port (reflection enabled) |
+| `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | Object storage credentials (dev defaults; production mounts from the secret store) |
 | `CONTENT_API_KEY` | — (empty) | Required by Compose; reserved for gateway auth (not yet enforced) |
 | `CONTENT_MIGRATE_ON_STARTUP` | `false` | Opt-in; explicit false vetoes migration |
 | `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |

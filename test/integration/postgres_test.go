@@ -15,9 +15,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
 	pgtest "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	adapterpg "github.com/synanton/content-service/internal/adapter/postgres"
+	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/port"
@@ -27,6 +30,7 @@ var (
 	ctx   = context.Background()
 	pool  *pgxpool.Pool
 	store *adapterpg.Store
+	blobs port.BlobStore
 	cfg   *config.Config
 )
 
@@ -37,8 +41,54 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "integration setup:", err)
 		os.Exit(1)
 	}
-	store = adapterpg.NewStore(pool, cfg)
+	blobs, err = startMinio(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "integration setup:", err)
+		os.Exit(1)
+	}
+	store = adapterpg.NewStore(pool, cfg, blobs)
 	os.Exit(m.Run())
+}
+
+func startMinio(ctx context.Context) (port.BlobStore, error) {
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image: "minio/minio:latest",
+			Env: map[string]string{
+				"MINIO_ROOT_USER":     "minioadmin",
+				"MINIO_ROOT_PASSWORD": "minioadmin",
+			},
+			ExposedPorts: []string{"9000/tcp"},
+			Cmd:          []string{"server", "/data"},
+			WaitingFor:   wait.ForHTTP("/minio/health/live").WithPort("9000/tcp"),
+		},
+		Started: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start minio: %w", err)
+	}
+	host, err := container.Host(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mapped, err := container.MappedPort(ctx, "9000")
+	if err != nil {
+		return nil, err
+	}
+	blobs, err := s3adapter.NewStore(s3adapter.Config{
+		Endpoint:  host + ":" + mapped.Port(),
+		Bucket:    "content-it",
+		Region:    "us-east-1",
+		AccessKey: "minioadmin",
+		SecretKey: "minioadmin",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := blobs.EnsureBucket(ctx); err != nil {
+		return nil, err
+	}
+	return blobs, nil
 }
 
 func startPostgres(ctx context.Context) (*pgxpool.Pool, *config.Config, error) {

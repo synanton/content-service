@@ -1,6 +1,8 @@
-# Content Service HTTP API
+# Content Service API
 
-Extracted from `internal/adapter/http/handler.go`. This document defines the REST contract the service implements in Phase 1. A gRPC surface lands in a later phase; the reference format and error semantics are already frozen.
+Extracted from `internal/adapter/http/handler.go` and `internal/adapter/grpc/server.go`. The REST and gRPC surfaces implement the same contract with the same error semantics; the reference format is already frozen.
+
+The gRPC contract is defined in `proto/content/v1/content.proto` (generated stubs in `gen/`, via `make proto`). Server reflection is enabled, so `grpcurl` works without a descriptor set.
 
 ---
 
@@ -100,6 +102,29 @@ Liveness: `200` with body `ok` while the process serves.
 Readiness: `200` with body `ready` when Postgres pings; `503` otherwise.
 
 ---
+
+## gRPC
+
+Service `content.v1.ContentService` (default `:50051`):
+
+| RPC | Mirrors | Error mapping |
+| --- | ------- | ------------- |
+| `Put(PutRequest)` | `POST /api/v1/artifacts` | missing tenant/payload → `InvalidArgument` |
+| `Get(GetRequest)` | `GET /api/v1/artifacts/{id}` | unknown or foreign id → `NotFound`; corrupt bytes → `DataLoss` |
+| `Head(HeadRequest)` | `HEAD /api/v1/artifacts/{id}` | unknown or foreign id → `NotFound` |
+| `Capabilities(CapabilitiesRequest)` | `GET /api/v1/capabilities` | — |
+
+Tenant scope travels in request fields (`tenant_id`), matching the REST `X-Tenant-ID` contract.
+
+```bash
+grpcurl -plaintext \
+  -d '{"tenant_id": "acme", "payload": "<base64>", "content_type": "text/plain"}' \
+  localhost:50051 content.v1.ContentService/Put
+
+grpcurl -plaintext \
+  -d '{"tenant_id": "acme", "artifact_id": "<uuid>"}' \
+  localhost:50051 content.v1.ContentService/Get
+```
 
 ## curl Cookbook
 

@@ -63,9 +63,9 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 - [x] `internal/adapter/postgres` — pgx implementation with dedup, tenant scoping, audit
 - [x] `internal/adapter/http` — net/http REST adapter (put/get/head/capabilities/healthz/readyz)
 - [x] `cmd/content-api` — wiring, migrate-on-startup, graceful shutdown
-- [x] `test/integration/postgres_test.go` — TestMain with testcontainers, 12 tests
-- [ ] S3/MinIO backing for `s3` and `parquet` tiers (currently bytes stay in Postgres with the tier label recorded)
-- [ ] gRPC surface (currently HTTP only)
+- [x] `test/integration/postgres_test.go` — TestMain with testcontainers Postgres, 12 tests
+- [x] S3/MinIO backing for `s3` and `parquet` tiers (`BlobStore` port + minio adapter, content-addressed keys, bucket auto-creation; `test/integration/s3_test.go`, 6 tests against containerized MinIO)
+- [x] gRPC surface (`proto/content/v1`, buf codegen to `gen/`, `test/integration/grpc_test.go` via bufconn, 6 tests)
 - [ ] Background jobs (disposition, integrity sweep, orphan sweeper)
 
 **Definition of done:** `make test-integration` passes with `-race`; cross-tenant tests return indistinguishable `NOT_FOUND`; legal-hold changes are audited.
@@ -128,10 +128,10 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 
 ## What to Do Today
 
-1. Run `make test-integration` and confirm all 12 tests green.
-2. Run `CONTENT_API_KEY=secret docker compose up --build` and `curl localhost:8080/readyz`.
-3. Pick the S3/MinIO backing task from Phase 1 above.
-4. Write the integration test first (put 300 KiB, assert bytes land in MinIO), then implement.
+1. Run `make test-integration` and confirm all 24 tests green.
+2. Run `make docker-up` and `curl localhost:8080/readyz`, plus a grpcurl `Put` against `:50051`.
+3. Pick the background-jobs task from Phase 5 above.
+4. Write the integration test first (expired artifact + released references → disposed after grace period), then implement.
 
 ---
 

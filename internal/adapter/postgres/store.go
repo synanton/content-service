@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,12 +19,32 @@ import (
 )
 
 type Store struct {
-	pool *pgxpool.Pool
-	cfg  *config.Config
+	pool  *pgxpool.Pool
+	cfg   *config.Config
+	blobs port.BlobStore
 }
 
-func NewStore(pool *pgxpool.Pool, cfg *config.Config) *Store {
-	return &Store{pool: pool, cfg: cfg}
+// NewStore wires the metadata database with the object tier. A nil blobs
+// keeps the legacy behavior (payload bytes in Postgres for every tier);
+// pass a real BlobStore to persist object-tier bytes in S3/MinIO.
+func NewStore(pool *pgxpool.Pool, cfg *config.Config, blobs port.BlobStore) *Store {
+	return &Store{pool: pool, cfg: cfg, blobs: blobs}
+}
+
+// BlobKey derives the content-addressed object key. The digest already
+// binds tenant scope at the reference layer; embedding the tenant keeps
+// keys debuggable and lets bucket policies stay tenant-readable.
+// Exported for operators and tests reconciling Postgres rows with objects.
+func BlobKey(tenantID, digest string) string {
+	hex, _, _ := strings.Cut(digest, ":")
+	if hex == "" {
+		hex = digest
+	}
+	return tenantID + "/" + hex
+}
+
+func blobKey(tenantID, digest string) string {
+	return BlobKey(tenantID, digest)
 }
 
 func (s *Store) selectTier(size int64) string {
@@ -52,7 +73,6 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 	expiresAt := time.Now().UTC().Add(time.Duration(retentionDays) * 24 * time.Hour)
 
 	var artifactID, storedDigest string
-	var generation, serializerVersion int
 	err := s.pool.QueryRow(ctx, `
 		SELECT artifact_id::text, digest FROM artifacts
 		WHERE tenant_id = $1 AND digest = $2`,
@@ -77,6 +97,18 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 	}
 
 	artifactID = uuid.NewString()
+	var inline []byte
+	if tier == "inline" {
+		inline = p.Payload
+	} else {
+		if s.blobs == nil {
+			return nil, fmt.Errorf("tier %s requires object storage: %w",
+				tier, domain.ErrInvalidArgument)
+		}
+		if err := s.blobs.Put(ctx, blobKey(p.TenantID, computed), p.Payload, p.ContentType); err != nil {
+			return nil, err
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin: %w", err)
@@ -90,7 +122,7 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 		VALUES ($1, $2::uuid, $3, 1, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT DO NOTHING`,
 		p.TenantID, artifactID, computed, p.SerializerVersion,
-		p.ContentType, len(p.Payload), tier, p.Payload, expiresAt,
+		p.ContentType, len(p.Payload), tier, inline, expiresAt,
 	); err != nil {
 		return nil, fmt.Errorf("insert artifact: %w", err)
 	}
@@ -126,8 +158,6 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 	if err != nil {
 		return nil, err
 	}
-	_ = generation
-	_ = serializerVersion
 	return &port.PutResult{Artifact: *art, DedupHit: false}, nil
 }
 
@@ -138,6 +168,15 @@ func (s *Store) Get(ctx context.Context, tenantID, artifactID string) ([]byte, *
 	art, payload, err := s.loadArtifactWithPayload(ctx, tenantID, artifactID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(payload) == 0 {
+		if s.blobs == nil {
+			return nil, nil, domain.ErrIntegrityMismatch
+		}
+		payload, err = s.blobs.Get(ctx, blobKey(tenantID, art.Digest))
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch object tier: %w", err)
+		}
 	}
 	if subtle.ConstantTimeCompare([]byte(digest.Compute(payload)), []byte(art.Digest)) != 1 {
 		return nil, nil, domain.ErrIntegrityMismatch

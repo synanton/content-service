@@ -29,8 +29,12 @@ make docker-up
 # Run unit tests
 make test
 
-# Run integration tests (needs Docker; pulls postgres:16-alpine on first run)
+# Run integration tests (needs Docker; pulls postgres:16-alpine and minio/minio on first run)
 make test-integration
+
+# Regenerate gRPC stubs after editing proto/content/v1/*.proto
+# (needs buf + protoc-gen-go + protoc-gen-go-grpc on PATH)
+make proto
 ```
 
 > **Do not run plain `go mod tidy` blindly.** Under go 1.22, tidy prunes the
