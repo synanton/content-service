@@ -15,9 +15,11 @@ integrity verification, retention lifecycle, and opaque references for
 all Synanton planes.
 
 The service is deliberately storage-independent at the contract level.
-The initial implementation uses PostgreSQL for metadata and S3-compatible
-object storage for payloads, with an optional Parquet batching tier for
-medium-sized payloads.
+The implementation uses PostgreSQL for metadata and inline payloads plus
+S3-compatible object storage (MinIO) for `parquet` and `s3` tiers, keyed
+content-addressably as `<tenant>/<digest-hex>` with the bucket created on
+startup. The Parquet batching tier currently shares the object backend
+(compaction lands with the background jobs).
 
 ---
 
@@ -142,7 +144,9 @@ and do not leak shared-backend structure.
 ## 6. API
 
 All operations require `tenant_id`. Cross-tenant access is denied at
-the API layer.
+the API layer. The same contract is served over REST and gRPC
+(`content.v1.ContentService`, `proto/content/v1/content.proto`); gRPC
+errors map as NotFound / InvalidArgument / DataLoss (integrity) / Internal.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -217,6 +221,8 @@ content:
     endpoint: ${CONTENT_S3_ENDPOINT}
     bucket: ${CONTENT_S3_BUCKET:-synanton-content}
     region: ${CONTENT_S3_REGION:-us-east-1}
+    access-key: ${CONTENT_S3_ACCESS_KEY:-minioadmin}
+    secret-key: ${CONTENT_S3_SECRET_KEY:-minioadmin}
     use-path-style: true
 
   storage:

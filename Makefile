@@ -4,7 +4,7 @@ GOLANGCI := golangci-lint
 VERSION := $(shell cat VERSION 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test test-integration test-conformance vet lint tools clean bench docker-up docker-down migrate certs
+.PHONY: build test test-integration test-conformance vet lint tools clean bench docker-up docker-down migrate certs proto
 
 build:
 	$(GO) build -ldflags "$(LDFLAGS)" ./...
@@ -35,6 +35,13 @@ tools:
 
 migrate:
 	migrate -path migrations -database "postgres://content:content@localhost:5432/content?sslmode=disable" up
+
+# Regenerate the gRPC stubs from proto/content/v1. Requires buf +
+# protoc-gen-go + protoc-gen-go-grpc on PATH (see CONTRIBUTING).
+# Run ONLY when the .proto contract changes — a diff here without an
+# accompanying contract change is a regression, not an update.
+proto:
+	PATH="$$HOME/go/bin:$$PATH" buf lint && PATH="$$HOME/go/bin:$$PATH" buf generate
 
 # Dev-only self-signed certificates for local mTLS smoke runs.
 # Output stays in ./certs/ (gitignored). Never use in production;

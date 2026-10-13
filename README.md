@@ -16,7 +16,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 **Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
 
-*State as of 2026-10-13 — Phase 1 core slice: HTTP API + Postgres adapter + testcontainers integration suite green.*
+*State as of 2026-10-13 — Phase 1 extended: S3/MinIO object tiers + gRPC surface, 24 integration tests green.*
 
 ### Maturity
 
@@ -25,15 +25,15 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 | Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core) | ⬜ |
 | Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core) | ⬜ |
 | HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ⬜ |
+| gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ⬜ |
 | Reference registry (register/release) | ✅ | ✅ | ⬜ | ⬜ |
 | Legal hold + audit trail | ✅ | ✅ | ⬜ | ⬜ |
-| S3/MinIO backing for object tiers | ⬜ | ⬜ | ⬜ | ⬜ |
-| gRPC surface | ⬜ | ⬜ | ⬜ | ⬜ |
+| S3/MinIO backing for object tiers | ✅ | ✅ (testcontainers minio) | ⬜ | ⬜ |
 | Background jobs (disposition, integrity, orphan sweeper) | ⬜ | ⬜ | ⬜ | ⬜ |
 
 `⬜` = not yet; nothing in this table is claimed before its evidence exists.
 
-Explicitly out of scope for v0.1.0: gRPC surface, Parquet batching, multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
+Explicitly out of scope for v0.2.0: Parquet batching, multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
 
 ---
 
@@ -157,7 +157,7 @@ Env vars (`CONTENT_*`) override file keys. See `configs/local.yaml` and [`docs/r
 
 ## API
 
-All `/api/v1/**` artifact routes are tenant-scoped via `X-Tenant-ID` (preferred), `?tenant_id=`, or the JSON body field.
+All `/api/v1/**` artifact routes are tenant-scoped via `X-Tenant-ID` (preferred), `?tenant_id=`, or the JSON body field. The same contract is served over gRPC (`content.v1.ContentService`, default `:50051`, server reflection enabled) — see [`docs/api.md`](docs/api.md) and `proto/content/v1/content.proto`.
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
@@ -165,6 +165,10 @@ All `/api/v1/**` artifact routes are tenant-scoped via `X-Tenant-ID` (preferred)
 | `GET` | `/api/v1/artifacts/{id}` | Retrieve payload bytes with integrity verification |
 | `HEAD` | `/api/v1/artifacts/{id}` | Existence check (full metadata is a future capability) |
 | `GET` | `/api/v1/capabilities` | Conformance level (`CORE`) and supported tiers |
+| gRPC | `content.v1.ContentService/Put` | Same as `POST /api/v1/artifacts` |
+| gRPC | `content.v1.ContentService/Get` | Same as `GET /api/v1/artifacts/{id}` |
+| gRPC | `content.v1.ContentService/Head` | Same as `HEAD /api/v1/artifacts/{id}` |
+| gRPC | `content.v1.ContentService/Capabilities` | Same as `GET /api/v1/capabilities` |
 
 ### Publish a Payload
 
@@ -184,7 +188,15 @@ Response: `201 Created` with the opaque `reference`, `artifact_id`, `digest`, `d
 curl "http://localhost:8080/api/v1/artifacts/<artifact_id>?tenant_id=acme"
 ```
 
-Unknown id — or an id owned by another tenant — returns an indistinguishable `404 NOT_FOUND`. See [`docs/api.md`](docs/api.md) for all endpoints.
+Unknown id — or an id owned by another tenant — returns an indistinguishable `404 NOT_FOUND` (gRPC: `NotFound`). See [`docs/api.md`](docs/api.md) for all endpoints.
+
+### gRPC
+
+```bash
+grpcurl -plaintext \
+  -d '{"tenant_id": "acme", "payload": "<base64>", "content_type": "text/plain"}' \
+  localhost:50051 content.v1.ContentService/Put
+```
 
 ---
 
@@ -194,6 +206,8 @@ Unknown id — or an id owned by another tenant — returns an indistinguishable
 | --- | ------- | ----------- |
 | `CONTENT_DB_URL` | `postgres://localhost:5432/content?sslmode=disable` | PostgreSQL connection string |
 | `CONTENT_SERVER_HOST` / `CONTENT_SERVER_PORT` | `0.0.0.0` / `8080` | HTTP listen address |
+| `CONTENT_GRPC_PORT` | `50051` | gRPC listen port |
+| `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | Object storage credentials (dev defaults) |
 | `CONTENT_API_KEY` | — (empty) | Reserved for gateway auth (Compose requires it set) |
 | `CONTENT_MIGRATE_ON_STARTUP` | `false` | Opt-in; applies `migrations/*.up.sql` before serving |
 | `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |
