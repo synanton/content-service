@@ -64,6 +64,15 @@ func Parse(raw string) (*Reference, error) {
 }
 
 func New(tenantID, artifactID, digest string, generation, serializerVersion int) *Reference {
+	if tenantID == "" {
+		panic("reference: tenant_id is required")
+	}
+	if artifactID == "" {
+		panic("reference: artifact_id is required")
+	}
+	if digest == "" {
+		panic("reference: digest is required")
+	}
 	return &Reference{
 		TenantID:          tenantID,
 		ArtifactID:        artifactID,

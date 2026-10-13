@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/synanton/content-service/internal/domain"
+	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
 	"github.com/synanton/content-service/pkg/reference"
 )
@@ -89,6 +91,7 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "payload must be base64")
 		return
 	}
+	start := time.Now()
 	res, err := h.store.Put(r.Context(), port.PutParams{
 		TenantID:          tenantID,
 		Payload:           raw,
@@ -98,6 +101,7 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		SerializerVersion: req.SerializerVersion,
 	})
 	if err != nil {
+		observability.PutErrors.WithLabelValues(tenantID).Inc()
 		if errors.Is(err, domain.ErrInvalidArgument) || errors.Is(err, domain.ErrReferenceTooLong) {
 			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
@@ -105,6 +109,7 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "put failed")
 		return
 	}
+	observability.PutLatency.WithLabelValues(tenantID, res.Artifact.StorageTier).Observe(time.Since(start).Seconds())
 	ref := reference.New(tenantID, res.Artifact.ArtifactID, res.Artifact.Digest, res.Artifact.Generation, res.Artifact.SerializerVersion)
 	writeJSON(w, http.StatusCreated, putResponse{
 		Reference:   ref.Encode(),
@@ -126,11 +131,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "tenant_id is required")
 		return
 	}
+	start := time.Now()
 	data, art, err := h.store.Get(r.Context(), tenantID, id)
 	if err != nil {
+		observability.GetErrors.WithLabelValues(tenantID).Inc()
 		h.writeStoreError(w, err)
 		return
 	}
+	observability.GetLatency.WithLabelValues(tenantID, art.StorageTier).Observe(time.Since(start).Seconds())
 	writeJSON(w, http.StatusOK, getResponse{
 		Payload:     base64.StdEncoding.EncodeToString(data),
 		Digest:      art.Digest,

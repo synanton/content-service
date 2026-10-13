@@ -6,9 +6,11 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
 
 ### Added
 
-- S3/MinIO backing for `parquet` and `s3` tiers (`BlobStore` port + minio adapter, content-addressed keys `<tenant>/<digest-hex>`, bucket auto-creation on startup). Postgres keeps inline bytes; object-tier rows store `payload NULL` and remain readable alongside legacy inline rows.
+- S3/MinIO backing for `parquet` and `s3` tiers (`BlobStore` port + minio adapter, content-addressed keys, bucket auto-creation on startup). Postgres keeps inline bytes; object-tier rows store `payload NULL` and remain readable alongside legacy inline rows.
 - gRPC surface (`content.v1.ContentService`: Put/Get/Head/Capabilities, server reflection) on `:50051` alongside the REST API; `proto/content/v1/content.proto` is the contract, `gen/` holds buf-generated stubs.
 - `make proto` regenerates stubs (buf + protoc-gen-go + protoc-gen-go-grpc required).
+- Background jobs (`cmd/disposition-job`, `cmd/integrity-job`, `cmd/orphan-sweeper`, `cmd/parquet-compactor`): ticker runner with immediate first run, Postgres advisory-lock leadership, tenant-hash sharding, Prometheus metrics, Compose `jobs` profile.
+- Design 1.26 Core conformance suite (`internal/conformance`): 10 behavioral checks run against the in-memory fake in unit tests and against Postgres + MinIO in integration; unit coverage for `pkg/digest` and `pkg/reference`.
 
 ### Changed
 

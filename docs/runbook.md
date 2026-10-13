@@ -84,6 +84,23 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 
 Precedence: `legal_hold > tenant_retention > owner_retention`. Erasure-vs-hold conflicts are resolved outside the service by the administrative workflow; the service executes the resolved directive it receives.
 
+## 7. Background jobs
+
+Run under the Compose `jobs` profile (`docker compose --profile jobs up -d`); plain `up` stays API-only. Jobs never run migrations — the API service owns the schema.
+
+| Job | Interval env (default) | Scaling |
+|---|---|---|
+| disposition | `CONTENT_JOBS_DISPOSITION_INTERVAL` (1h) | Single leader (advisory lock `0xC0DE0001`) |
+| integrity | `CONTENT_JOBS_INTEGRITY_INTERVAL` (24h) | Tenant shards (`CONTENT_JOBS_SHARD_INDEX`/`COUNT`) |
+| orphan sweeper | `CONTENT_JOBS_ORPHAN_INTERVAL` (1h) | Single leader (advisory lock `0xC0DE0002`) |
+| parquet compactor | `CONTENT_JOBS_COMPACTOR_INTERVAL` (6h) | Inventory only |
+
+- `CONTENT_JOBS_BATCH_SIZE` (default 1000) bounds every sweep query.
+- `CONTENT_SAMPLE_RATE` (default 0.01) samples integrity verification per run.
+- Lost leadership logs `peer leads, skipping tick` and retries next interval — never an error, never dual execution.
+- Disposition deletes the database row first, then the blob; a crash between the two leaves an orphan blob the sweeper heals. Metadata rows whose bytes are missing are audited, never auto-deleted.
+- The sweeper honors `CONTENT_ORPHAN_DRY_RUN=true` (log candidates, delete nothing).
+
 `markForDeletion` releases one owner's reference row (`released_at = now()`). Physical deletion additionally requires ref count zero, no legal hold, and grace-period expiry (background jobs land in Phase 5).
 
 ## 7. Migrations

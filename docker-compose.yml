@@ -82,6 +82,69 @@ services:
       start_period: 15s
       retries: 3
 
+  # Background jobs share the service image with an overridden entrypoint.
+  # They run under the `jobs` profile so plain `docker compose up` stays
+  # API-only: `docker compose --profile jobs up -d`.
+  # Leadership is via Postgres advisory locks (disposition, sweeper);
+  # integrity shards by tenant (CONTENT_JOBS_SHARD_INDEX/COUNT).
+  x-job: &job
+    build:
+      context: .
+      args:
+        VERSION: dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      CONTENT_DB_URL: postgres://content:content@postgres:5432/content?sslmode=disable
+      CONTENT_S3_ENDPOINT: http://minio:9000
+      CONTENT_S3_BUCKET: synanton-content
+      CONTENT_S3_REGION: us-east-1
+      CONTENT_JOBS_BATCH_SIZE: 1000
+    profiles: ["jobs"]
+
+  disposition-job:
+    <<: *job
+    entrypoint: ["/srv/disposition-job"]
+    environment:
+      CONTENT_DB_URL: postgres://content:content@postgres:5432/content?sslmode=disable
+      CONTENT_S3_ENDPOINT: http://minio:9000
+      CONTENT_S3_BUCKET: synanton-content
+      CONTENT_S3_REGION: us-east-1
+      CONTENT_JOBS_DISPOSITION_INTERVAL: 1h
+
+  integrity-job:
+    <<: *job
+    entrypoint: ["/srv/integrity-job"]
+    environment:
+      CONTENT_DB_URL: postgres://content:content@postgres:5432/content?sslmode=disable
+      CONTENT_S3_ENDPOINT: http://minio:9000
+      CONTENT_S3_BUCKET: synanton-content
+      CONTENT_S3_REGION: us-east-1
+      CONTENT_JOBS_INTEGRITY_INTERVAL: 24h
+
+  orphan-sweeper:
+    <<: *job
+    entrypoint: ["/srv/orphan-sweeper"]
+    environment:
+      CONTENT_DB_URL: postgres://content:content@postgres:5432/content?sslmode=disable
+      CONTENT_S3_ENDPOINT: http://minio:9000
+      CONTENT_S3_BUCKET: synanton-content
+      CONTENT_S3_REGION: us-east-1
+      CONTENT_JOBS_ORPHAN_INTERVAL: 1h
+
+  parquet-compactor:
+    <<: *job
+    entrypoint: ["/srv/parquet-compactor"]
+    environment:
+      CONTENT_DB_URL: postgres://content:content@postgres:5432/content?sslmode=disable
+      CONTENT_S3_ENDPOINT: http://minio:9000
+      CONTENT_S3_BUCKET: synanton-content
+      CONTENT_S3_REGION: us-east-1
+      CONTENT_JOBS_COMPACTOR_INTERVAL: 6h
+
 volumes:
   postgres_data:
     name: content-postgres-data

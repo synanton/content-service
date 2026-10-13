@@ -122,6 +122,9 @@ func startPostgres(ctx context.Context) (*pgxpool.Pool, *config.Config, error) {
 	c.Retention.LegalHoldEnabled = true
 	c.Integrity.VerifyOnPublish = true
 	c.Security.AuditEnabled = true
+	c.Jobs.BatchSize = 10000
+	c.Jobs.ShardIndex = 0
+	c.Jobs.ShardCount = 1
 	if err := c.Validate(); err != nil {
 		return nil, nil, err
 	}

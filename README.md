@@ -23,13 +23,14 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 | Area | Implemented | Unit/integration tested | Conformance-validated | Benchmark-validated |
 |---|---|---|---|---|
 | Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core) | ⬜ |
-| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core) | ⬜ |
+| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core suite) | ⬜ |
 | HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ⬜ |
 | gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ⬜ |
-| Reference registry (register/release) | ✅ | ✅ | ⬜ | ⬜ |
-| Legal hold + audit trail | ✅ | ✅ | ⬜ | ⬜ |
+| Reference registry (register/release) | ✅ | ✅ | ✅ (Core suite) | ⬜ |
+| Legal hold + audit trail | ✅ | ✅ | ✅ (Core suite) | ⬜ |
 | S3/MinIO backing for object tiers | ✅ | ✅ (testcontainers minio) | ⬜ | ⬜ |
-| Background jobs (disposition, integrity, orphan sweeper) | ⬜ | ⬜ | ⬜ | ⬜ |
+| Background jobs (disposition, integrity, orphan sweeper) | ✅ | ✅ (testcontainers) | ⬜ | ⬜ |
+| Parquet compaction | ⬜ (inventory only) | ✅ (non-destructive) | ⬜ | ⬜ |
 
 `⬜` = not yet; nothing in this table is claimed before its evidence exists.
 
@@ -227,12 +228,31 @@ grpcurl -plaintext \
 
 - `GET /healthz` — liveness (200 while serving)
 - `GET /readyz` — readiness (DB ping; 503 on failure)
-- `GET /metrics` — placeholder text (Prometheus wiring lands in Phase 5)
+- `GET /metrics` — Prometheus metrics (put/get latency and errors, integrity failures, disposition/orphan/parquet gauges)
 - `GET /api/v1/capabilities` — conformance level and supported tiers
 
 ### Logging
 
 Standard-library `log` today. Set container log level via the platform's log driver; structured JSON logging lands with the observability phase.
+
+---
+
+## Background Jobs
+
+| Job | Scaling | Purpose |
+| --- | ------- | ------- |
+| `disposition-job` | Single leader (advisory lock) | Expired artifacts → check refs and legal holds → delete row first, then blob |
+| `integrity-job` | Sharded by tenant (hash mod) | Re-read payloads, verify digests, audit on mismatch (no auto-quarantine yet) |
+| `orphan-sweeper` | Single leader (advisory lock) | Metadata-without-payload: audit only. Payload-without-metadata: delete after grace (dry-run supported) |
+| `parquet-compactor` | Inventory only | Report parquet-tier backlog; real merging needs parquet-go + read-path support |
+
+Run locally under the `jobs` profile (plain `up` stays API-only):
+
+```bash
+docker compose --profile jobs up -d
+```
+
+Each job runs immediately on start, then on its tick, and exits cleanly on SIGTERM. Lost leadership resolves to skip-and-retry, never an error. See [`docs/runbook.md`](docs/runbook.md) for intervals and sharding.
 
 ---
 
@@ -257,11 +277,11 @@ make bench             # digest + reference benchmarks
 See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the phased plan and the current milestone.
 
 - Phase 0 — Project setup and contract alignment (done)
-- Phase 1 — Core conformance: HTTP + Postgres + integration suite (current)
+- Phase 1 — Core conformance: HTTP + gRPC + Postgres + S3 + integration suite (done)
 - Phase 2 — Commitix adapter design (Java `ContentStore` port)
 - Phase 3 — Optional large-payload adapter
 - Phase 4 — Vertical slice (event envelope carries the reference)
-- Phase 5 — Extended lifecycle (jobs, Parquet, observability)
+- Phase 5 — Extended lifecycle: background jobs (done), Parquet compaction, full observability (current)
 - Phase 6 — Adoption decision
 
 ---
