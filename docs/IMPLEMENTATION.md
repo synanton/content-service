@@ -115,13 +115,15 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 
 ---
 
-## Phase 5 — Extended Lifecycle
+## Phase 5 — Extended Lifecycle (current)
 
 **Goal:** Operable service.
 
-- [ ] Disposition, integrity, orphan-sweeper, Parquet compactor jobs
-- [ ] Parquet batching tier and multi-region S3
-- [ ] Prometheus metrics endpoint and dashboards
+- [x] Disposition, integrity, orphan-sweeper jobs (+ compactor inventory scaffold)
+- [ ] Real Parquet batching + compaction (needs parquet-go + read-path support)
+- [ ] Multi-region S3
+- [x] Prometheus metrics endpoint (`/metrics` serves registered counters/histograms/gauges)
+- [ ] Dashboards
 - [ ] `docs/runbook.md` incident procedures exercised
 
 ---

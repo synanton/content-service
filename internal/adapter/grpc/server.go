@@ -3,12 +3,14 @@ package grpc
 import (
 	"context"
 	"errors"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	contentv1 "github.com/synanton/content-service/gen/content/v1"
 	"github.com/synanton/content-service/internal/domain"
+	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
 	"github.com/synanton/content-service/pkg/reference"
 )
@@ -28,6 +30,7 @@ func NewServer(store port.ContentStore) *Server {
 }
 
 func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1.PutResponse, error) {
+	start := time.Now()
 	res, err := s.store.Put(ctx, port.PutParams{
 		TenantID:          req.GetTenantId(),
 		Payload:           req.GetPayload(),
@@ -37,8 +40,11 @@ func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1
 		SerializerVersion: int(req.GetSerializerVersion()),
 	})
 	if err != nil {
+		observability.PutErrors.WithLabelValues(req.GetTenantId()).Inc()
 		return nil, toStatus(err)
 	}
+	observability.PutLatency.WithLabelValues(
+		req.GetTenantId(), res.Artifact.StorageTier).Observe(time.Since(start).Seconds())
 	ref := reference.New(
 		req.GetTenantId(),
 		res.Artifact.ArtifactID,
@@ -56,10 +62,14 @@ func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1
 }
 
 func (s *Server) Get(ctx context.Context, req *contentv1.GetRequest) (*contentv1.GetResponse, error) {
+	start := time.Now()
 	data, art, err := s.store.Get(ctx, req.GetTenantId(), req.GetArtifactId())
 	if err != nil {
+		observability.GetErrors.WithLabelValues(req.GetTenantId()).Inc()
 		return nil, toStatus(err)
 	}
+	observability.GetLatency.WithLabelValues(
+		req.GetTenantId(), art.StorageTier).Observe(time.Since(start).Seconds())
 	return &contentv1.GetResponse{
 		Payload:     data,
 		Digest:      art.Digest,

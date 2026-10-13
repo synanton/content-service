@@ -36,8 +36,8 @@ func NewStore(pool *pgxpool.Pool, cfg *config.Config, blobs port.BlobStore) *Sto
 // keys debuggable and lets bucket policies stay tenant-readable.
 // Exported for operators and tests reconciling Postgres rows with objects.
 func BlobKey(tenantID, digest string) string {
-	hex, _, _ := strings.Cut(digest, ":")
-	if hex == "" {
+	_, hex, found := strings.Cut(digest, ":")
+	if !found || hex == "" {
 		hex = digest
 	}
 	return tenantID + "/" + hex

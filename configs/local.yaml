@@ -36,3 +36,12 @@ orphan:
   grace_period: 24h
   sweep_interval: 1h
   dry_run: false
+
+jobs:
+  disposition_interval: 1h
+  integrity_interval: 24h
+  orphan_interval: 1h
+  compactor_interval: 6h
+  batch_size: 1000
+  shard_index: 0
+  shard_count: 1

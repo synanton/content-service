@@ -3,8 +3,13 @@ package conformance
 import (
 	"testing"
 
+	"github.com/synanton/content-service/internal/conformance"
 	"github.com/synanton/content-service/internal/config"
 )
+
+func TestCoreContractAgainstFake(t *testing.T) {
+	conformance.Verify(t, conformance.NewFakeStore())
+}
 
 func TestServerStartsWithValidConfig(t *testing.T) {
 	cfg := &config.Config{
@@ -26,6 +31,11 @@ func TestServerStartsWithValidConfig(t *testing.T) {
 		},
 		Security: config.SecurityConfig{
 			AuditEnabled: true,
+		},
+		Jobs: config.JobsConfig{
+			BatchSize:  100,
+			ShardIndex: 0,
+			ShardCount: 1,
 		},
 	}
 

@@ -171,12 +171,16 @@ errors map as NotFound / InvalidArgument / DataLoss (integrity) / Internal.
 | `content.put.errors` | counter | tenant_id, error_type |
 | `content.get.errors` | counter | tenant_id, error_type |
 | `content.integrity.failures` | counter | tenant_id |
-| `content.orphan.candidates` | gauge | tenant_id |
-| `content.disposition.duration` | histogram | tenant_id |
-| `content.cross_tenant.denied` | counter | tenant_id |
+| `content.orphan.candidates` | gauge | tenant_id, kind |
+| `content.disposition.duration` | histogram | — |
+| `content.put.latency` / `content.get.latency` | histogram | tenant_id, tier |
+| `content.put.errors` / `content.get.errors` | counter | tenant_id |
 
 All metrics include `tenant_id` as a label. Metrics do not include
-payload bytes or individual digests.
+payload bytes or individual digests. There is deliberately no
+cross-tenant-denial counter: denied reads are indistinguishable from
+missing content by design, so counting them separately would itself be
+the side channel.
 
 ---
 

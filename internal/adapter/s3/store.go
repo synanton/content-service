@@ -9,6 +9,8 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+
+	"github.com/synanton/content-service/internal/port"
 )
 
 // Store is a port.BlobStore backed by S3-compatible object storage.
@@ -156,4 +158,23 @@ func (s *Store) Exists(ctx context.Context, key string) (bool, error) {
 // Bucket returns the configured bucket (operators, tests).
 func (s *Store) Bucket() string {
 	return s.bucket
+}
+
+// List enumerates objects under prefix for reconciliation scans.
+func (s *Store) List(ctx context.Context, prefix string) ([]port.BlobInfo, error) {
+	var out []port.BlobInfo
+	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	}) {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("s3: list %q: %w", prefix, obj.Err)
+		}
+		out = append(out, port.BlobInfo{
+			Key:        obj.Key,
+			Size:       obj.Size,
+			ModifiedAt: obj.LastModified,
+		})
+	}
+	return out, nil
 }

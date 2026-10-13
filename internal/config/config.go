@@ -17,6 +17,17 @@ type Config struct {
 	Security SecurityConfig
 	Observability ObservabilityConfig
 	Server   ServerConfig
+	Jobs     JobsConfig
+}
+
+type JobsConfig struct {
+	DispositionInterval time.Duration
+	IntegrityInterval   time.Duration
+	OrphanInterval      time.Duration
+	CompactorInterval   time.Duration
+	BatchSize           int
+	ShardIndex          int
+	ShardCount          int
 }
 
 type DBConfig struct {
@@ -138,6 +149,15 @@ func Load() (*Config, error) {
 			MigrateOnStartup: getEnvBool("CONTENT_MIGRATE_ON_STARTUP", false),
 			MigrationsDir:    getEnv("CONTENT_MIGRATIONS_DIR", "migrations"),
 		},
+		Jobs: JobsConfig{
+			DispositionInterval: getEnvDuration("CONTENT_JOBS_DISPOSITION_INTERVAL", time.Hour),
+			IntegrityInterval:   getEnvDuration("CONTENT_JOBS_INTEGRITY_INTERVAL", 24*time.Hour),
+			OrphanInterval:      getEnvDuration("CONTENT_JOBS_ORPHAN_INTERVAL", time.Hour),
+			CompactorInterval:   getEnvDuration("CONTENT_JOBS_COMPACTOR_INTERVAL", 6*time.Hour),
+			BatchSize:           getEnvInt("CONTENT_JOBS_BATCH_SIZE", 1000),
+			ShardIndex:          getEnvInt("CONTENT_JOBS_SHARD_INDEX", 0),
+			ShardCount:          getEnvInt("CONTENT_JOBS_SHARD_COUNT", 1),
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -159,6 +179,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Integrity.SampleRate < 0 || c.Integrity.SampleRate > 1 {
 		return fmt.Errorf("sample rate must be between 0 and 1")
+	}
+	if c.Jobs.BatchSize <= 0 {
+		return fmt.Errorf("jobs batch size must be positive")
+	}
+	if c.Jobs.ShardCount <= 0 || c.Jobs.ShardIndex < 0 || c.Jobs.ShardIndex >= c.Jobs.ShardCount {
+		return fmt.Errorf("jobs shard index must satisfy 0 <= index < count")
 	}
 	return nil
 }
