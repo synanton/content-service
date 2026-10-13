@@ -39,6 +39,18 @@ orphan:
   sweep_interval: 1h
   dry_run: false
 
+security:
+  mtls_cert: ""
+  mtls_key: ""
+  kms_key_id: ""
+  audit_enabled: true
+
+observability:
+  log_level: info
+  metrics_enabled: true
+  tracing_enabled: true
+  tracing_endpoint: ""
+
 jobs:
   disposition_interval: 1h
   integrity_interval: 24h

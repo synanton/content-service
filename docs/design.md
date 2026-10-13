@@ -1,6 +1,6 @@
 # Content Service — Design Document
 
-**Status:** Approved for Phase 0 implementation\
+**Status:** In implementation (Phase 5); contract + Core/Extended conformance live\
 **Implements:** Synanton Design 1.26 (Content Cache Plane)\
 **Language:** Go 1.22+\
 **Date:** 2026-10-13
@@ -18,8 +18,9 @@ The service is deliberately storage-independent at the contract level.
 The implementation uses PostgreSQL for metadata and inline payloads plus
 S3-compatible object storage (MinIO) for `parquet` and `s3` tiers, keyed
 content-addressably as `<tenant>/<digest-hex>` with the bucket created on
-startup. The Parquet batching tier currently shares the object backend
-(compaction lands with the background jobs).
+startup. `parquet`-tier puts write immutable single-row Parquet files
+(`parquet/<tenant>/<uuid>.parquet`); the compactor merges sub-target files
+per tenant with exact row-offset repointing, and reads use ranged S3 GETs.
 
 ---
 
@@ -28,7 +29,7 @@ startup. The Parquet batching tier currently shares the object backend
 ```text
                     ┌─────────────────────┐
                     │   content-api       │
-                    │   (gRPC server)     │
+                    │ (gRPC/REST server)  │
                     └──────────┬──────────┘
                                │
                     ┌──────────┴──────────┐
@@ -53,9 +54,9 @@ startup. The Parquet batching tier currently shares the object backend
 | `content-metadata` | Artifact registry, retention policies, legal hold, reference counts | HA, read replicas |
 | `content-storage` | Tier routing (inline, Parquet, S3), payload read/write | Horizontal |
 | `disposition-job` | Expired artifact disposition, legal hold check, physical delete | Single leader |
-| `integrity-job` | Background digest verification, quarantine on mismatch | Sharded by tenant |
+| `integrity-job` | Background digest verification, audit on mismatch (no auto-quarantine yet) | Sharded by tenant |
 | `orphan-sweeper` | Metadata/object-store reconciliation, orphan deletion | Single leader |
-| `parquet-compactor` | Small batch merging into larger Parquet files | Sharded by partition |
+| `parquet-compactor` | Small-file merges per tenant (oldest first) | Single process, per-tenant groups |
 
 ---
 
@@ -157,17 +158,22 @@ the API layer. The same contract is served over REST and gRPC
 (`content.v1.ContentService`, `proto/content/v1/content.proto`); gRPC
 errors map as NotFound / InvalidArgument / DataLoss (integrity) / Internal.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `Put` | `content.v1.ContentService/Put` | Publish artifact; idempotent by `(tenant_id, digest)` |
-| `Get` | `content.v1.ContentService/Get` | Retrieve with integrity verification |
-| `Head` | `content.v1.ContentService/Head` | Metadata only (future capability) |
-| `MarkForDeletion` | `content.v1.ContentService/MarkForDeletion` | Release logical reference |
-| `SetRetention` | `content.v1.ContentService/SetRetention` | Set/update retention policy |
-| `SetLegalHold` | `content.v1.ContentService/SetLegalHold` | Place/release legal hold |
-| `Capabilities` | `content.v1.ContentService/Capabilities` | Advertise conformance and features |
-| `VerifyIntegrity` | `content.v1.ContentService/VerifyIntegrity` | Verify payload against stored digest |
-| `GetAuditTrail` | `content.v1.ContentService/GetAuditTrail` | Access and lifecycle audit entries |
+Implemented today, identically over REST (`/api/v1/...`) and gRPC (`content.v1.ContentService/...`):
+
+| Method | Description |
+|--------|-------------|
+| `Put` | Publish artifact; idempotent by `(tenant_id, digest)` |
+| `Get` | Retrieve with integrity verification |
+| `Head` | Existence check only |
+| `Capabilities` | Advertise conformance level (`CORE`) and features |
+
+Reserved for later phases (named here so clients do not invent them):
+
+| Method | Status |
+|--------|--------|
+| `MarkForDeletion` / `SetRetention` / `SetLegalHold` | Lifecycle RPCs; use the service-side retention flow for now |
+| `VerifyIntegrity` | Covered by read-time verification + the integrity job |
+| `GetAuditTrail` / full-metadata `Head` | Audit log is write-only today |
 
 ---
 
@@ -175,15 +181,20 @@ errors map as NotFound / InvalidArgument / DataLoss (integrity) / Internal.
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `content.put.latency` | histogram | tenant_id, tier |
-| `content.get.latency` | histogram | tenant_id, tier |
-| `content.put.errors` | counter | tenant_id, error_type |
-| `content.get.errors` | counter | tenant_id, error_type |
-| `content.integrity.failures` | counter | tenant_id |
-| `content.orphan.candidates` | gauge | tenant_id, kind |
-| `content.disposition.duration` | histogram | — |
-| `content.put.latency` / `content.get.latency` | histogram | tenant_id, tier |
-| `content.put.errors` / `content.get.errors` | counter | tenant_id |
+| `content_put_latency_seconds` | histogram | tenant, tier |
+| `content_get_latency_seconds` | histogram | tenant, tier |
+| `content_put_errors_total` | counter | tenant |
+| `content_get_errors_total` | counter | tenant |
+| `content_integrity_failures_total` | counter | tenant |
+| `content_integrity_checked_total` | counter | tenant |
+| `content_disposition_deleted_total` | counter | tenant |
+| `content_disposition_skipped_total` | counter | tenant, reason |
+| `content_disposition_duration_seconds` | histogram | — |
+| `content_orphan_candidates` | gauge | tenant, kind |
+| `content_orphan_deleted_total` | counter | tenant |
+| `content_parquet_candidates` | gauge | tenant |
+| `content_parquet_merged_files_total` | counter | tenant |
+| `content_parquet_merged_rows_total` | counter | tenant |
 
 All metrics include `tenant_id` as a label. Metrics do not include
 payload bytes or individual digests. There is deliberately no
@@ -195,16 +206,20 @@ the side channel.
 
 ## 8. Security
 
-- **Authentication:** mTLS with SPIFFE/SPIRE workload identity.
-- **Tenant scope:** JWT `tenant_id` claim + path-level enforcement +
-  reference validation.
-- **Authorization:** capability-based (workload identity determines
-  accessible endpoints).
-- **Audit:** all administrative operations (legal hold, retention
-  changes, disposition) are audited with actor, timestamp, scope,
-  action, reason, and before/after state.
+- **Authentication:** not enforced yet — the service trusts the network
+  boundary. mTLS with workload identity is the planned mechanism
+  (config carries `mtls-cert`/`mtls-key` placeholders); do not expose
+  the API publicly until it lands.
+- **Tenant scope:** enforced today via `X-Tenant-ID` header (preferred),
+  `tenant_id` query parameter, or body field, plus reference validation.
+  JWT claims and path-level enforcement are future work.
+- **Authorization:** tenant-match only. Capability-based authorization
+  is future work.
+- **Audit:** legal-hold changes, disposition deletions, and integrity
+  mismatches are audited with actor, timestamp, scope, action, reason,
+  and before/after state.
 - **Cross-tenant leak prevention:** indistinguishable errors,
-  constant-time comparison, tenant-scoped metadata queries.
+  constant-time digest comparison, tenant-scoped metadata queries.
 
 ---
 
@@ -218,7 +233,7 @@ the side channel.
 | `orphan-sweeper` | Background job | Single leader |
 | `parquet-compactor` | Background job | Sharded by partition |
 | `postgres` | Metadata + retention | HA, read replicas |
-| `s3` | Payload storage | Multi-region for critical tenants |
+| `s3` | Payload storage | S3-compatible (MinIO locally); multi-region is future |
 
 ---
 
@@ -226,6 +241,10 @@ the side channel.
 
 ```yaml
 content:
+  server:
+    host: 0.0.0.0
+    port: 8080
+    grpc-port: 50051
   db:
     url: ${CONTENT_DB_URL}
     max-connections: 20
@@ -243,6 +262,16 @@ content:
     object-threshold-bytes: 262144
     parquet-batch-size: 1000
     parquet-compression: zstd
+    parquet-target-rows: 1000
+    parquet-max-files: 32
+  jobs:
+    disposition-interval: 1h
+    integrity-interval: 24h
+    orphan-interval: 1h
+    compactor-interval: 6h
+    batch-size: 1000
+    shard-index: 0
+    shard-count: 1
 
   retention:
     default-policy-days: 90
@@ -278,16 +307,18 @@ content:
 ## 11. Conformance
 
 The service MUST pass the Design 1.26 conformance test suite before
-advertising any conformance level. The initial target is Core
-conformance:
+advertising any conformance level. Achieved and covered by
+`internal/conformance` (14 checks, fake + real wiring):
 
 - Identity, put/get, atomic publication
 - Integrity verification
-- Tenant isolation, authorization
-- Provenance, errors, capabilities
+- Tenant isolation, tier recording, reference lifecycle
+- Errors, capabilities
 
-Extended and Full conformance claims require corresponding test
-evidence.
+Not yet modeled, so explicitly out of any conformance claim:
+provenance/source linkage, classification labels, generation
+reprocessing semantics. Full conformance requires all three plus
+corresponding test evidence.
 
 ---
 

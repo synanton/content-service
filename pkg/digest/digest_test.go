@@ -39,6 +39,26 @@ func TestVerifyRoundTrip(t *testing.T) {
 	}
 }
 
+func BenchmarkCompute(b *testing.B) {
+	payload := bytes.Repeat([]byte("benchmark payload data"), 64)
+	b.SetBytes(int64(len(payload)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Compute(payload)
+	}
+}
+
+func BenchmarkVerify(b *testing.B) {
+	payload := bytes.Repeat([]byte("benchmark payload data"), 64)
+	digest := Compute(payload)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !Verify(payload, digest) {
+			b.Fatal("verify must accept the computed digest")
+		}
+	}
+}
+
 func TestComputeFromReaderMatchesCompute(t *testing.T) {
 	payload := []byte("streamed payload bytes")
 	fromReader, err := ComputeFromReader(bytes.NewReader(payload))

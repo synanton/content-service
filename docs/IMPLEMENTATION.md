@@ -38,7 +38,7 @@ Normative references used throughout:
 
 ---
 
-## Phase 1 — Core Conformance (current)
+## Phase 1 — Core Conformance (done)
 
 **Goal:** A fully tested put/get core against real Postgres that can be demonstrated in an integration test.
 
@@ -66,23 +66,23 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 - [x] `test/integration/postgres_test.go` — TestMain with testcontainers Postgres, 12 tests
 - [x] S3/MinIO backing for `s3` and `parquet` tiers (`BlobStore` port + minio adapter, content-addressed keys, bucket auto-creation; `test/integration/s3_test.go`, 6 tests against containerized MinIO)
 - [x] gRPC surface (`proto/content/v1`, buf codegen to `gen/`, `test/integration/grpc_test.go` via bufconn, 6 tests)
-- [ ] Background jobs (disposition, integrity sweep, orphan sweeper)
+- [x] Background jobs — see Phase 5 (disposition, integrity, orphan sweeper, real Parquet compaction)
 
 **Definition of done:** `make test-integration` passes with `-race`; cross-tenant tests return indistinguishable `NOT_FOUND`; legal-hold changes are audited.
 
 ---
 
-## Phase 2 — Commitix Adapter Design
+## Phase 2 — Commitix Adapter Design (largely landed in platform/commitix repos)
 
 **Goal:** Java `ContentStore` port in the platform repo, agreed with this service.
 
 ### Tasks
 
 - [ ] ADR for module placement (`java:content-cache-api`) and reference format
-- [ ] Java `ContentStore` interface (put/get/exists/register/release) + `ContentReference` parser
-- [ ] Contract tests shared with the Go suite (dedup, isolation, legal hold)
-- [ ] Feature flag hierarchy (per-tenant → per-intent-type → threshold → kill switch)
-- [ ] Migration plan for `commitix_intents` (`payload_kind`, `content_ref`, `payload_sha256`)
+- [x] Java `ContentStore` interface (put/get/exists/register/release) + `ContentReference` parser
+- [x] Contract tests shared with the Go suite (dedup, isolation, legal hold)
+- [x] Feature flag hierarchy (per-tenant → per-intent-type → threshold → kill switch)
+- [ ] Migration plan for `commitix_intents` (`payload_kind`, `content_ref`, `payload_sha256`) — deferred by design: the envelope approach needs no migration
 
 **Definition of done:** Java contract tests green against both the in-memory fake and the Postgres-backed store.
 
@@ -94,10 +94,11 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 
 ### Tasks
 
-- [ ] Commitix `ContentStore` HTTP client calling this service
-- [ ] Timeout and deadline propagation (2s connect, 5s read, 10s declare budget)
+- [x] Commitix `ContentStore` HTTP client calling this service
+- [x] Commitix `ContentStore` gRPC client calling this service
+- [x] Timeout and deadline propagation (2s connect, 5s read/RPC)
 - [ ] Retry bounded by the outer deadline (no extension on retry)
-- [ ] Observability metrics (externalized count, threshold histogram, put/get latency)
+- [x] Observability metrics (put/get latency; externalized count and threshold histogram live client-side)
 
 **Definition of done:** Commit/rollback, remote-outage, checksum-failure, and orphan-cleanup contract tests pass.
 
@@ -130,10 +131,10 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 
 ## What to Do Today
 
-1. Run `make test-integration` and confirm all 24 tests green.
+1. Run `make test-integration` and confirm all 42 tests green.
 2. Run `make docker-up` and `curl localhost:8080/readyz`, plus a grpcurl `Put` against `:50051`.
-3. Pick the background-jobs task from Phase 5 above.
-4. Write the integration test first (expired artifact + released references → disposed after grace period), then implement.
+3. Pick an open Phase 5 item above (dashboards, structured logging, runbook incident exercises).
+4. Write the test first, then implement; update the maturity table only with evidence in hand.
 
 ---
 

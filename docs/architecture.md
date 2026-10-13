@@ -5,34 +5,34 @@ Hexagonal (ports and adapters):
 ```text
 ┌─────────────────────────────────────────────────┐
 │               cmd/content-api                   │
-│              (wiring + HTTP)                    │
+│            (wiring + HTTP/gRPC)                 │
 └───────────────────────┬─────────────────────────┘
-                        │
-         ┌──────────────┼──────────────┐
-         │              │              │
-┌────────▼──────┐ ┌─────▼──────┐ ┌─────▼──────┐
-│  REST API     │ │  Metrics   │ │  Health    │
-│  (net/http)   │ │  (stub)    │ │ (/readyz)  │
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+┌────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
+│  REST + gRPC  │ │  Metrics    │ │  Health    │
+│  adapters     │ │ (Prometheus)│ │ (/readyz)  │
 └────────┬──────┘ └─────┬──────┘ └─────┬──────┘
-         │              │              │
-         └──────────────┼──────────────┘
-                        │
-                ┌───────▼────────┐
-                │  ContentStore  │
-                │  port          │
-                └───────┬────────┘
-                        │
-         ┌──────────────┼───────────────┐
-         │              │               │
-┌────────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
-│  PostgreSQL   │ │  S3/MinIO  │ │  Parquet    │
-│  (pgx)        │ │  (planned) │ │  (planned)  │
+         │               │               │
+         └───────────────┼───────────────┘
+                         │
+                 ┌───────▼────────┐
+                 │  ContentStore  │
+                 │  port          │
+                 └───────┬────────┘
+                         │
+         ┌───────────────┼───────────────┐
+         │               │               │
+┌────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
+│  PostgreSQL   │ │  S3/MinIO   │ │  Parquet    │
+│  (pgx)        │ │ (minio-go)  │ │ (parquet-go)│
 └───────────────┘ └────────────┘ └─────────────┘
 ```
 
 The domain package is pure Go: artifact types and sentinel errors only
 (`internal/domain`). The port (`internal/port.ContentStore`) is the
-sole seam the HTTP adapter and the background jobs program against.
+sole seam the HTTP/gRPC adapters and the background jobs program against.
 The Postgres adapter (`internal/adapter/postgres`) owns dedup by
 `(tenant_id, digest)`, tenant-scoped reads, the reference registry,
 retention/legal-hold transitions, and the audit trail.

@@ -18,12 +18,19 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
   release-vs-retention separation, head consistency, register idempotency)
   and run against the fake (unit) and Postgres + MinIO (integration).
 - Background jobs (`cmd/disposition-job`, `cmd/integrity-job`, `cmd/orphan-sweeper`, `cmd/parquet-compactor`): ticker runner with immediate first run, Postgres advisory-lock leadership, tenant-hash sharding, Prometheus metrics, Compose `jobs` profile.
-- Design 1.26 Core conformance suite (`internal/conformance`): 10 behavioral checks run against the in-memory fake in unit tests and against Postgres + MinIO in integration; unit coverage for `pkg/digest` and `pkg/reference`.
+- Migration `000005_parquet_files` (`parquet_files` table + artifact row pointers).
 
 ### Changed
 
 - `CONTENT_GRPC_PORT` (default 50051), `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` configuration.
-- Go directive stays `go 1.22`; new dependencies pinned to go1.22-compatible versions (minio-go v7.0.77, grpc v1.67.3, protobuf v1.36.5).
+- New `CONTENT_JOBS_*` (intervals, batch size, shard index/count) and `CONTENT_PARQUET_TARGET_ROWS` / `CONTENT_PARQUET_MAX_FILES` configuration.
+- `/metrics` serves real Prometheus counters, histograms, and gauges.
+- Go directive stays `go 1.22`; new dependencies pinned to go1.22-compatible versions (minio-go v7.0.77, grpc v1.67.3, protobuf v1.36.5, parquet-go v0.25.0).
+
+### Fixed
+
+- `BlobKey` took the pre-colon half of the digest, collapsing every tenant's objects onto one S3 key; keys are now `<tenant>/<digest-hex>`.
+- Single-row Parquet files stored `parquet_row_idx=1` for 0-indexed rows; fresh files now record row 0.
 
 ## [0.1.0] - 2026-10-13
 
