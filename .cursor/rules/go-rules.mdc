@@ -1,0 +1,81 @@
+---
+description: Go code generation standards for content-service - hexagonal architecture, ports and adapters, pgx, testing conventions
+globs: **/*.go
+alwaysApply: false
+---
+
+# Go Generation Rules (content-service)
+
+## Role
+
+You are a senior Go developer, obsessed with clean and fully tested code, working on the Synanton Content Cache 1.26 reference implementation.
+
+## Design Reference
+
+The normative contract is Synanton Design 1.26 plus the approved Content Cache / Commitix integration proposal v3 (`platform/docs/architecture/proposals/Content-service/`). Local spec: `docs/design.md`. Any behavior change must align with these documents first.
+
+## Code Structure
+
+Hexagonal (ports and adapters). The project layout follows this pattern:
+
+```
+cmd/content-api/        # HTTP server entrypoint + wiring only
+internal/
+  domain/               # pure domain types + sentinel errors (no I/O)
+  port/                 # interfaces (ContentStore port)
+  adapter/
+    postgres/           # pgx adapter (metadata + inline payload bytes)
+    http/               # net/http REST adapter
+  config/               # environment-first configuration loading
+  security/             # tenant context + audit log writer
+pkg/
+  digest/               # SHA-256 helpers (sha256:<hex>)
+  reference/            # v1 ContentReference encode/parse
+test/
+  integration/          # testcontainers-based tests (build tag: integration)
+tests/
+  conformance/          # Design 1.26 conformance checks
+```
+
+**Rules:**
+
+- `internal/domain/` must not import any package that performs I/O. If you reach for `pgx`, `net/http`, or S3 SDKs inside domain, define a port instead.
+- Adapters depend on ports (interfaces), never the reverse. `cmd/` wires concrete adapters.
+- Tenant checks belong on every read, write, and metadata path. Cross-tenant failures must be indistinguishable (`ErrNotFound`, same message, no timing leak).
+
+## Build System
+
+Standard Go toolchain plus `make` targets (`Makefile`):
+
+```bash
+make build             # version-stamped binary (VERSION file is the source of truth)
+make test              # unit tests with -race
+make test-integration  # testcontainers suite (needs Docker)
+make test-conformance  # Design 1.26 Core checks
+make vet               # go vet
+make bench             # digest + reference benchmarks
+```
+
+Key commands:
+
+```bash
+go build ./...
+go test -race ./...
+go test -race -tags=integration ./test/integration/... -v
+```
+
+> **Do not run plain `go mod tidy`.** Under go 1.22, tidy prunes the dependencies of `integration`-tagged test files (e.g. testcontainers) from `go.mod`, silently breaking `make test-integration` for the next person. Add adapter dependencies with explicit `go get module@version` instead.
+
+## Guidelines
+
+When generating Go code:
+
+- Make the minimum change possible to complete the task.
+- Wrap errors with context (`fmt.Errorf("...: %w", err)`); use sentinel errors in `internal/domain` (`ErrNotFound`, `ErrTenantMismatch`, `ErrIntegrityMismatch`) and compare with `errors.Is`.
+- Prefer table-driven tests for domain logic; use fake clocks, never `time.Sleep` in tests.
+- Always run with `-race` (unit and integration). Race detector must be clean.
+- Configuration is environment-first (`CONTENT_*`), validated in `Load()`; fail fast with the cause on stderr before listeners bind.
+- PostgreSQL via `pgx/v5` (`pgxpool`). Dedup writes use `ON CONFLICT DO NOTHING` / `DO UPDATE`; multi-table writes share one transaction.
+- A foreign key must reference a `PRIMARY KEY` or `UNIQUE` **constraint** — a bare `CREATE UNIQUE INDEX` does not satisfy Postgres FKs. Origin: `reference_registry` FK against `artifacts(tenant_id, digest)` failed until `uq_artifacts_tenant_digest` became a constraint (2026-10-13).
+- Migrations are plain `*.up.sql` / `*.down.sql` applied lexically; the service applies `.up.sql` only on `CONTENT_MIGRATE_ON_STARTUP=true`. Rollbacks are manual, reverse order.
+- Keep comments concise. Never use comments for chain-of-thought; code must be self-explanatory with short doc comments on exported identifiers only.

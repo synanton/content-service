@@ -1,0 +1,49 @@
+---
+description: Docker Compose and container standards for content-service - env ports, persistent volumes, dev certificates, migrate-on-startup
+globs: **/docker-compose.yml
+alwaysApply: false
+---
+
+# Docker Rules (content-service)
+
+## Role
+
+You are operating the content-service local development stack: Postgres + MinIO + the Go service, built from source.
+
+## Reference Stack
+
+`docker-compose.yml` mirrors the equalix-go local stack (env ports, healthchecks, migrate-on-startup), extended with persistent volumes and dev certificates.
+
+## Compose Conventions
+
+- **Host ports via env** so stacked environments don't collide: `PG_PORT` (default 5432), `MINIO_PORT` (9000), `MINIO_CONSOLE_PORT` (9001), `APP_PORT` (8080).
+- **Healthchecks on every service**: `pg_isready` for Postgres, MinIO `/minio/health/live`, service `/readyz` containing `ready`. Dependents use `condition: service_healthy`.
+- **Persistence via explicitly-named volumes**, never bind mounts from `/tmp`, never anonymous volumes:
+
+```yaml
+volumes:
+  postgres_data:
+    name: content-postgres-data
+  minio_data:
+    name: content-minio-data
+```
+
+Explicit `name:` keeps state across `docker compose down` and compose-project renames. Drop with `docker compose down -v`.
+
+- **Certificates live in-project, never in `/tmp`**: dev-only mTLS material goes to `./certs/` (created by `make certs`, self-signed via openssl, `chmod 600` on keys), mounted read-only (`./certs:/certs:ro`). `./certs/` is gitignored (`certs/*` + `!certs/.gitkeep`, plus `*.crt`, `*.key`, `*.pem`). Never commit real certificates; production mounts them from the secret store.
+- **Migrate on startup**: `CONTENT_MIGRATE_ON_STARTUP=true` applies `migrations/*.up.sql` before serving, so a fresh clone serves without manual steps. Required env uses shell enforcement: `${CONTENT_API_KEY:?set CONTENT_API_KEY before up}`.
+- **Build args**: service builds from source with `VERSION: dev` (release stamps from the `VERSION` file).
+
+## Dockerfile Conventions
+
+Multi-stage, static binary on distroless (`gcr.io/distroless/static:nonroot`, user `65532:65532`), `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w -X main.version=${VERSION}"`. Keep `.dockerignore` tight: exclude `.git`, `*.log`, `/tmp/`, results, `*.md`, `.env*`, `.github/`.
+
+## Startup / Shutdown
+
+```bash
+make docker-up    # certs + build + start (preferred)
+make docker-down  # stop, keep volumes
+docker compose down -v  # stop and drop persistent volumes
+```
+
+Startup order: config resolve → optional migrate → DB ping → bind → serve. Fail fast (exit 1) on bad config, failed ping, or failed migration. SIGTERM/SIGINT drains in-flight HTTP within 30s, then exit 0.

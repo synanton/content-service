@@ -1,329 +1,285 @@
-# Content Service — Content Cache 1.26 Implementation
+# content-service
 
-**Content Service** is a Phase 1 implementation of *Synanton Content Cache 1.26*.
-It guarantees **tenant-scoped, content-addressable storage** with integrity
-verification, retention lifecycle, and opaque references for all Synanton planes.
+> Spec-first Go implementation of Synanton Content Cache 1.26 — tenant-scoped, content-addressable storage with integrity verification, retention lifecycle, and opaque references.
 
-If a payload enters the platform, it gets a digest. If it leaves, the digest
-is verified. If a tenant asks for it, the tenant is authorized. If retention
-expires, disposition follows the policy lattice — not an S3 lifecycle guess.
+[![Go Version](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
+
+`content-service` is the **reference implementation** of [Content Cache 1.26](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/synanton-design-1.26.md), built from the approved [integration proposal v3](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/proposals/Content-service/content-cache-commitix-integration-proposal.md).
+
+If a payload enters the platform, it gets a digest. If it leaves, the digest is verified. If a tenant asks for it, the tenant is authorized. If retention expires, disposition follows the policy lattice — not an S3 lifecycle guess.
 
 ---
 
-## Component Layout
+## Status
 
-```
-content-service/
-  ├── content-api/            gRPC/REST server — put, get, head, lifecycle RPCs
-  ├── content-metadata/       PostgreSQL — artifact registry, tenant scope, retention
-  ├── content-storage/        Storage tier abstraction (inline, Parquet, S3)
-  └── content-jobs/           Background: disposition, integrity, orphan-sweeper
+**Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
+
+*State as of 2026-10-13 — Phase 1 core slice: HTTP API + Postgres adapter + testcontainers integration suite green.*
+
+### Maturity
+
+| Area | Implemented | Unit/integration tested | Conformance-validated | Benchmark-validated |
+|---|---|---|---|---|
+| Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core) | ⬜ |
+| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core) | ⬜ |
+| HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ⬜ |
+| Reference registry (register/release) | ✅ | ✅ | ⬜ | ⬜ |
+| Legal hold + audit trail | ✅ | ✅ | ⬜ | ⬜ |
+| S3/MinIO backing for object tiers | ⬜ | ⬜ | ⬜ | ⬜ |
+| gRPC surface | ⬜ | ⬜ | ⬜ | ⬜ |
+| Background jobs (disposition, integrity, orphan sweeper) | ⬜ | ⬜ | ⬜ | ⬜ |
+
+`⬜` = not yet; nothing in this table is claimed before its evidence exists.
+
+Explicitly out of scope for v0.1.0: gRPC surface, Parquet batching, multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
+
+---
+
+## What It Is
+
+`content-service` sits between platform planes and raw object storage. It solves a problem direct S3 usage handles poorly: **tenant-scoped, auditable, verifiable content storage with lifecycle policies**, without leaking bucket layouts or letting one consumer's delete remove another tenant's bytes.
+
+It targets Commitix large-payload externalization first, then ingestion artifacts, knowledge chunks, and search projections.
+
+### Core Mechanisms
+
+- **Content-addressable dedup** by `(tenant_id, digest)` — same bytes, same tenant → same reference; same bytes, different tenant → separate references, no existence leak
+- **Tier routing by size** — inline (< 4 KiB), Parquet batches (< 256 KiB), individual S3 objects (above); Phase 1 records the tier label with bytes in Postgres
+- **Opaque v1 references** — URI-encoded `tenant_id`, `artifact_id` (UUID), `digest`, `generation`, `serializer_version`; 512-character bound; wire format is not public API
+- **Two-phase deletion** — `markForDeletion` releases one owner's reference; physical deletion needs ref count zero, no legal hold, grace-period expiry
+- **Retention lattice** — `legal_hold > tenant_retention > owner_retention`; erasure-vs-hold conflicts resolve outside the service
+- **Integrity verification** — SHA-256 at publication time; full re-hash on replay/audit; storage-layer checksums trusted on the hot path
+
+### Put/Get Lifecycle
+
+```text
+PUT (tenant, bytes) → digest → dedup? → store → reference
+GET (tenant, artifact_id) → authorize → fetch → verify digest → bytes
 ```
 
-**Dependency direction:**
-
-```
-content-api              ←── no storage deps beyond content-metadata client
-     │
-content-metadata         ←── content-api (gRPC client)
-     │
-content-storage          ←── content-metadata (tier abstraction)
-```
+Publication is atomic: the artifact row, retention row, and reference row commit together. A failed put leaves no half-persisted artifact.
 
 ---
 
 ## Architecture
 
+Hexagonal (ports and adapters):
+
+```text
+┌─────────────────────────────────────────────────┐
+│               cmd/content-api                   │
+│              (wiring + HTTP)                    │
+└───────────────────────┬─────────────────────────┘
+                        │
+         ┌──────────────┼──────────────┐
+         │              │              │
+┌────────▼──────┐ ┌─────▼──────┐ ┌─────▼──────┐
+│  REST API     │ │  Metrics   │ │  Health    │
+│  (net/http)   │ │  (stub)    │ │ (/readyz)  │
+└────────┬──────┘ └─────┬──────┘ └─────┬──────┘
+         │              │              │
+         └──────────────┼──────────────┘
+                        │
+                ┌───────▼────────┐
+                │  ContentStore  │
+                │  port          │
+                └───────┬────────┘
+                        │
+         ┌──────────────┼───────────────┐
+         │              │               │
+┌────────▼──────┐ ┌─────▼──────┐ ┌──────▼──────┐
+│  PostgreSQL   │ │  S3/MinIO  │ │  Parquet    │
+│  (pgx)        │ │  (planned) │ │  (planned)  │
+└───────────────┘ └────────────┘ └─────────────┘
 ```
- ┌─────────────────────────────────────────────────────────────────┐
- │  content-api                                                    │
- │                                                                 │
- │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐   │
- │   │  Put     │  │  Get     │  │  Head    │  │  Lifecycle    │   │
- │   │  path    │  │  path    │  │  path    │  │  path         │   │
- │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬────────┘   │
- │        │             │             │               │            │
- │        ▼             ▼             ▼               ▼            │
- │   ┌─────────────────────────────────────────────────────────┐   │
- │   │  Tenant authorization + integrity verification          │   │
- │   └─────────────────────────────────────────────────────────┘   │
- └──────────┬──────────────────────────────────────────────────────┘
-            │
-            ▼
- ┌──────────────────────────────┐   ┌──────────────────────────────┐
- │  content-metadata            │   │  content-storage             │
- │                              │   │                              │
- │  Artifact registry           │   │  Inline (Postgres BYTEA)     │
- │  Retention policies          │   │  Parquet batches (S3)        │
- │  Legal hold state            │   │  Individual objects (S3)     │
- │  Reference counts            │   │                              │
- └──────────────────────────────┘   └──────────────────────────────┘
-```
+
+The domain package is pure Go: no `pgx`, no HTTP, no S3. Adapters depend on ports. This is what makes the lifecycle testable against containers.
+
+See [`docs/architecture.md`](docs/architecture.md) for details.
 
 ---
 
-## Storage Tiers
-
-On every `put`, the payload is routed by size:
-
-```
-  payload < 4 KiB          →  inline in Postgres (fast, transactional)
-  4 KiB ≤ payload < 256 KiB →  append to Parquet batch on S3 (columnar)
-  payload ≥ 256 KiB        →  individual S3 object (streaming)
-```
-
-Thresholds are configurable and benchmarked. The tier is an implementation
-detail — the reference is opaque.
-
----
-## Retention Precedence
-
-Retention is evaluated at disposition time, not publication time:
-
-| Priority | Policy | Behavior |
-|:---:|---|---|
-| 1 (high) | Legal hold | Blocks disposition regardless of retention. |
-| 2 | Tenant retention | Minimum for all tenant content. Owner cannot shorten. |
-| 3 | Owner retention | May extend tenant retention. Never shorten. |
-
-S3 lifecycle manages tier transitions, never physical deletion.
-
----
-
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
 - Go 1.22+
-- Docker & Docker Compose (Postgres + MinIO)
-- `grpcurl`
+- Docker + Docker Compose (for Postgres, MinIO, and integration tests)
 
-### 1. Start dependencies
-
-```bash
-docker compose up -d postgres minio
-```
-
-### 2. Apply migrations
+### Build
 
 ```bash
-make migrate
+git clone https://github.com/synanton/content-service.git
+cd content-service
+go build -o bin/content-service ./cmd/content-api
 ```
 
-### 3. Run the service
+### Run with Docker Compose
 
 ```bash
-make run
+make docker-up   # generates dev certs into ./certs/, then builds + starts
+curl http://localhost:8080/readyz
 ```
 
-### 4. Publish a payload
+Postgres and MinIO data persist in explicitly-named Docker volumes
+(`content-postgres-data`, `content-minio-data`), so state survives
+`docker compose down`. Drop them with `docker compose down -v`.
+Dev mTLS material lives in `./certs/` (gitignored, generated by
+`make certs`); production mounts real certificates from the secret
+store. Host ports are overridable: `PG_PORT`, `MINIO_PORT`,
+`MINIO_CONSOLE_PORT`, `APP_PORT`.
 
-```bash
-grpcurl -plaintext \
-  -d '{
-        "tenant_id": "acme",
-        "payload": "<base64-encoded bytes>",
-        "media_type": "application/json"
-      }' \
-  localhost:50051 content.v1.ContentService/Put
+### Minimal Configuration
+
+```yaml
+server:
+  host: 0.0.0.0
+  port: 8080
+
+database:
+  url: postgres://content:content@localhost:5432/content?sslmode=disable
+
+storage:
+  inline_threshold_bytes: 4096
+  object_threshold_bytes: 262144
+
+retention:
+  default_policy_days: 90
+  legal_hold_enabled: true
+  disposition_grace_period: 72h
 ```
 
-**Response:** `ContentReference` with a versioned opaque reference.
-
-### 5. Retrieve a payload
-
-```bash
-grpcurl -plaintext \
-  -d '{"tenant_id": "acme", "reference": "v1:..."}' \
-  localhost:50051 content.v1.ContentService/Get
-```
-
-**Response:** payload bytes, after integrity verification.
-
-### 6. Check capabilities
-
-```bash
-grpcurl -plaintext \
-  -d '{}' \
-  localhost:50051 content.v1.ContentService/Capabilities
-```
-
-**Response:** conformance level and optional features.
+Env vars (`CONTENT_*`) override file keys. See `configs/local.yaml` and [`docs/runbook.md`](docs/runbook.md) for the full reference.
 
 ---
 
 ## API
 
-All operations require `tenant_id`. Cross-tenant access returns an
-indistinguishable error.
+All `/api/v1/**` artifact routes are tenant-scoped via `X-Tenant-ID` (preferred), `?tenant_id=`, or the JSON body field.
 
-  -----------------------------------------------------------------------
-  Method            Endpoint                            Description
-  ----------------- ----------------------------------- -------------------
-  `Put`             `content.v1.ContentService/Put`     Publish artifact;
-                                                        idempotent by
-                                                        `(tenant_id, digest)`
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| `POST` | `/api/v1/artifacts` | Publish an artifact (idempotent by `(tenant_id, digest)`) |
+| `GET` | `/api/v1/artifacts/{id}` | Retrieve payload bytes with integrity verification |
+| `HEAD` | `/api/v1/artifacts/{id}` | Existence check (full metadata is a future capability) |
+| `GET` | `/api/v1/capabilities` | Conformance level (`CORE`) and supported tiers |
 
-  `Get`             `content.v1.ContentService/Get`     Retrieve with
-                                                        integrity
-                                                        verification
+### Publish a Payload
 
-  `Head`            `content.v1.ContentService/Head`    Metadata only, no
-                                                        payload bytes
+```bash
+PAYLOAD=$(echo -n "hello content-service" | base64 -w0)
+curl -X POST http://localhost:8080/api/v1/artifacts \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-ID: acme" \
+  -d "{\"payload\":\"$PAYLOAD\",\"content_type\":\"text/plain\",\"owner_id\":\"demo\"}"
+```
 
-  `MarkForDeletion` `.../MarkForDeletion`               Release logical
-                                                        reference (not
-                                                        physical delete)
+Response: `201 Created` with the opaque `reference`, `artifact_id`, `digest`, `dedup_hit`, and `storage_tier`.
 
-  `SetRetention`    `.../SetRetention`                  Set/update
-                                                        retention policy
+### Retrieve a Payload
 
-  `SetLegalHold`    `.../SetLegalHold`                  Place/release legal
-                                                        hold
+```bash
+curl "http://localhost:8080/api/v1/artifacts/<artifact_id>?tenant_id=acme"
+```
 
-  `Capabilities`    `.../Capabilities`                  Advertise conformance
-                                                        and features
-
-  `VerifyIntegrity` `.../VerifyIntegrity`               Verify payload
-                                                        against stored digest
-
-  `GetAuditTrail`   `.../GetAuditTrail`                 Access and lifecycle
-                                                        audit entries
-  -----------------------------------------------------------------------
+Unknown id — or an id owned by another tenant — returns an indistinguishable `404 NOT_FOUND`. See [`docs/api.md`](docs/api.md) for all endpoints.
 
 ---
 
-## Configuration
+## Configuration Reference
 
-```yaml
-content:
-  db:
-    url: ${CONTENT_DB_URL}
-    max-connections: 20
+| Key | Default | Description |
+| --- | ------- | ----------- |
+| `CONTENT_DB_URL` | `postgres://localhost:5432/content?sslmode=disable` | PostgreSQL connection string |
+| `CONTENT_SERVER_HOST` / `CONTENT_SERVER_PORT` | `0.0.0.0` / `8080` | HTTP listen address |
+| `CONTENT_API_KEY` | — (empty) | Reserved for gateway auth (Compose requires it set) |
+| `CONTENT_MIGRATE_ON_STARTUP` | `false` | Opt-in; applies `migrations/*.up.sql` before serving |
+| `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |
+| `CONTENT_INLINE_THRESHOLD_BYTES` | `4096` | Below this: `inline` tier label |
+| `CONTENT_OBJECT_THRESHOLD_BYTES` | `262144` | Above this: `s3` tier label; between: `parquet` |
+| `CONTENT_RETENTION_DEFAULT_DAYS` | `90` | Applied when the put omits `retention_days` |
+| `CONTENT_VERIFY_ON_PUBLISH` | `true` | Digest verified at publication time |
+| `CONTENT_VERIFY_ON_READ` | `false` | Full re-hash on read (replay/audit only) |
+| `CONTENT_ORPHAN_GRACE_PERIOD` | `24h` | Minimum age before an unreferenced object is a candidate |
+| `CONTENT_AUDIT_ENABLED` | `true` | Legal-hold and retention changes audited |
 
-  s3:
-    endpoint: ${CONTENT_S3_ENDPOINT}
-    bucket: ${CONTENT_S3_BUCKET:-synanton-content}
-    region: ${CONTENT_S3_REGION:-us-east-1}
-    use-path-style: true
+---
 
-  storage:
-    inline-threshold-bytes: 4096
-    object-threshold-bytes: 262144
-    parquet-batch-size: 1000
-    parquet-compression: zstd
+## Observability
 
-  retention:
-    default-policy-days: 90
-    legal-hold-enabled: true
-    disposition-grace-period: 72h
+### Endpoints
 
-  integrity:
-    verify-on-read: false
-    verify-on-publish: true
-    verification-interval: 24h
-    sample-rate: 0.01
+- `GET /healthz` — liveness (200 while serving)
+- `GET /readyz` — readiness (DB ping; 503 on failure)
+- `GET /metrics` — placeholder text (Prometheus wiring lands in Phase 5)
+- `GET /api/v1/capabilities` — conformance level and supported tiers
 
-  orphan:
-    grace-period: 24h
-    sweep-interval: 1h
-    dry-run: false
+### Logging
 
-  security:
-    mtls-cert: ${CONTENT_MTLS_CERT}
-    mtls-key: ${CONTENT_MTLS_KEY}
-    kms-key-id: ${CONTENT_KMS_KEY_ID}
-    audit-enabled: true
+Standard-library `log` today. Set container log level via the platform's log driver; structured JSON logging lands with the observability phase.
 
-  observability:
-    log-level: info
-    metrics-enabled: true
-    tracing-enabled: true
-    tracing-endpoint: ${OTEL_ENDPOINT}
+---
+
+## Development
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, gates, and review checklists.
+
+Common commands:
+
+```bash
+make test              # unit tests
+make test-integration  # requires Docker (testcontainers, postgres:16-alpine)
+make test-conformance  # Design 1.26 Core checks
+make vet               # go vet
+make bench             # digest + reference benchmarks
 ```
 
 ---
 
-## Background Jobs
+## Roadmap
 
-  ------------------------------------------------------------------------
-  Job                 Scaling                Purpose
-  ------------------- ---------------------- ------------------------------
-  `disposition-job`   Single leader          Expired artifacts → check refs
-                                             and legal holds → delete
+See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the phased plan and the current milestone.
 
-  `integrity-job`     Sharded by tenant     Re-read payloads, verify
-                                             digests, alert on mismatch
-
-  `orphan-sweeper`    Single leader          Reconcile metadata vs object
-                                             store, delete orphans after
-                                             grace period
-
-  `parquet-compactor` Sharded by partition   Merge small Parquet batches
-                                             into larger files
-  ------------------------------------------------------------------------
+- Phase 0 — Project setup and contract alignment (done)
+- Phase 1 — Core conformance: HTTP + Postgres + integration suite (current)
+- Phase 2 — Commitix adapter design (Java `ContentStore` port)
+- Phase 3 — Optional large-payload adapter
+- Phase 4 — Vertical slice (event envelope carries the reference)
+- Phase 5 — Extended lifecycle (jobs, Parquet, observability)
+- Phase 6 — Adoption decision
 
 ---
 
-## Design Decisions
+## Relation to Design 1.26
 
-See `docs/adr/` for the rationale behind key architectural choices.
+Design 1.26 is the contract; this repo is one conformant implementation. The service:
 
-| ADR | Title |
-|-----|-------|
-| *(pending)* | Module placement and dependency direction |
-| *(pending)* | Reference format and versioning |
-| *(pending)* | Checksum semantics and verification cadence |
-| *(pending)* | Threshold configuration and benchmark methodology |
-| *(pending)* | Retention precedence lattice |
-| *(pending)* | Orphan reconciliation protocol |
-| *(pending)* | Cross-tenant leak prevention |
-| *(pending)* | Two-phase deletion semantics |
+- Preserves tenant isolation, content-addressable dedup, and the retention lattice
+- Replaces storage-specific mechanisms (bucket layouts, lifecycle rules) with the port contract
+- Is validated by the integration suite in `test/integration/` (12 tests against real Postgres)
 
-## Documentation
+Key references:
 
-- [Design Document](docs/design.md) — Architecture, storage tiers, API, security
-- [Implementation Plan](docs/implementation-plan.md) — Phased delivery with exit criteria
-- [Synanton Design 1.26](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/synanton-design-1.26.md) — Content Cache contract
-- [Integration Proposal v3](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/proposals/Content-service/content-cache-commitix-integration-proposal.md) — Approved proposal
+- Contract: Synanton Design 1.26 (Content Cache plane)
+- Integration: approved proposal v3 (15 decisions in the TL;DR table)
+- Local: `docs/design.md` (§3 tiers, §4 reference, §5 retention, §6 API)
 
 ---
 
-## Phase 1 Acceptance Criteria
+## Contributing
 
-| # | Deliverable | Status |
-|---|-------------|--------|
-| 1 | Tenant-scoped put/get with opaque reference | pending |
-| 2 | Content-addressable dedup by `(tenant_id, digest)` | pending |
-| 3 | Inline/Parquet/S3 tier routing | pending |
-| 4 | Cross-tenant leak prevention (indistinguishable error) | pending |
-| 5 | Atomic publication — all-or-nothing visibility | pending |
-| 6 | Retention lattice: legal_hold > tenant > owner | pending |
-| 7 | `markForDeletion` as reference release, not delete | pending |
-| 8 | Capability discovery — conformance level advertised | pending |
-| 9 | Integrity verification at publication and on replay | pending |
-| 10 | Orphan reconciliation with grace period | pending |
-| 11 | Commitix adapter contract tests | pending |
+Contributions welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR.
 
-**Phase 2+ (not in scope):** SLO-backed operations, multi-region storage,
-Web UI, Prometheus dashboards.
+1. Fork the repository
+2. Create a feature branch (`git checkout -b CNT-my-change`)
+3. Add tests for new behavior
+4. Ensure `make test` and `go vet ./...` pass
+5. Submit a pull request (merging is manual — a maintainer merges after review)
 
 ---
 
 ## License
 
-[Apache 2.0](LICENSE)
-
----
-
-## References
-
-- [Synanton Platform Architecture 1.0](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/synanton-platform-architecture-1.0.md)
-- [Synanton Design 1.26 — Content Cache](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/synanton-design-1.26.md)
-- [Synanton Design 1.27 — Eventing and Workflow](https://raw.githubusercontent.com/synanton/platform/refs/heads/main/docs/architecture/synanton-design-1.27.md)
-- [Commitix White Paper 1.0](https://raw.githubusercontent.com/synanton/commitix/refs/heads/main/docs/Commitix-White-Paper-v1.0.md)
-
----
-
-**Status:** Proposal / PoC. Content Service is a candidate implementation of
-Content Cache 1.26. Not yet approved for production use.
+Apache License 2.0. See [LICENSE](LICENSE).
