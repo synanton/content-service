@@ -1,5 +1,19 @@
-version: "3.8"
-
+# Local development stack: Postgres + MinIO + content-service (built from source).
+#
+# Usage:
+#   CONTENT_API_KEY=secret docker compose up --build
+# The service migrates on startup (CONTENT_MIGRATE_ON_STARTUP=true) so a
+# fresh clone serves without manual migration steps.
+#
+# Persistence: postgres and minio data live in explicitly-named Docker
+# volumes (content-postgres-data, content-minio-data), so state survives
+# `docker compose down` and compose-project renames. Volumes are managed
+# by Docker, never bind-mounted from /tmp. Drop them with:
+#   docker compose down -v
+#
+# Certificates: dev mTLS material lives in ./certs/ (gitignored, created
+# by `make certs`), mounted read-only into the service. Never commit
+# real certificates; production mounts them from the secret store.
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,11 +22,12 @@ services:
       POSTGRES_PASSWORD: content
       POSTGRES_DB: content
     ports:
-      - "5432:5432"
+      # Host ports via env so stacked environments don't collide.
+      - "${PG_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U content"]
+      test: ["CMD-SHELL", "pg_isready -U content -d content"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -23,8 +38,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -34,15 +49,40 @@ services:
       timeout: 3s
       retries: 10
 
-  migrate:
-    image: migrate/migrate:latest
-    volumes:
-      - ./migrations:/migrations
-    command: ["-path", "/migrations", "-database", "postgres://content:content@postgres:5432/content?sslmode=disable", "up"]
+  content-service:
+    build:
+      context: .
+      args:
+        VERSION: dev
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      CONTENT_DB_URL: postgres://content:content@postgres:5432/content?sslmode=disable
+      CONTENT_S3_ENDPOINT: http://minio:9000
+      CONTENT_S3_BUCKET: synanton-content
+      CONTENT_S3_REGION: us-east-1
+      CONTENT_SERVER_HOST: 0.0.0.0
+      CONTENT_SERVER_PORT: 8080
+      CONTENT_API_KEY: ${CONTENT_API_KEY:?set CONTENT_API_KEY before up}
+      CONTENT_MIGRATE_ON_STARTUP: "true"
+      CONTENT_MTLS_CERT: /certs/service.crt
+      CONTENT_MTLS_KEY: /certs/service.key
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - ./certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz | grep -q ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
 volumes:
   postgres_data:
+    name: content-postgres-data
   minio_data:
+    name: content-minio-data

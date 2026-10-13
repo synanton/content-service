@@ -72,8 +72,11 @@ type ObservabilityConfig struct {
 }
 
 type ServerConfig struct {
-	Port int
-	Host string
+	Port             int
+	Host             string
+	APIKey           string
+	MigrateOnStartup bool
+	MigrationsDir    string
 }
 
 func Load() (*Config, error) {
@@ -123,8 +126,11 @@ func Load() (*Config, error) {
 			TracingEndpoint: getEnv("CONTENT_OTEL_ENDPOINT", ""),
 		},
 		Server: ServerConfig{
-			Host: getEnv("CONTENT_SERVER_HOST", "0.0.0.0"),
-			Port: getEnvInt("CONTENT_SERVER_PORT", 50051),
+			Host:             getEnv("CONTENT_SERVER_HOST", "0.0.0.0"),
+			Port:             getEnvInt("CONTENT_SERVER_PORT", 8080),
+			APIKey:           getEnv("CONTENT_API_KEY", ""),
+			MigrateOnStartup: getEnvBool("CONTENT_MIGRATE_ON_STARTUP", false),
+			MigrationsDir:    getEnv("CONTENT_MIGRATIONS_DIR", "migrations"),
 		},
 	}
 

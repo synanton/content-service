@@ -1,0 +1,9 @@
+.git
+bin/
+test/
+tests/
+docs/
+.tmp/
+*.md
+!go.mod
+!go.sum

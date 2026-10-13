@@ -1,0 +1,147 @@
+# Implementation Guide
+
+This document tells you **what to build next** and **in what order**. It is the operational companion to `docs/implementation-plan.md` and the approved integration proposal v3.
+
+The goal is to reach a working, testable slice as fast as possible, then grow outward from the store core.
+
+Normative references used throughout:
+
+- Contract: Synanton Design 1.26 (Content Cache plane)
+- Integration: approved Content Cache / Commitix proposal v3 (TL;DR table of 15 decisions)
+- Local: `docs/design.md` (§3 tiers, §4 reference, §5 retention, §6 API)
+
+---
+
+## Guiding Principles
+
+1. **Contract first.** Tenant isolation and integrity verification must be correct and fully tested before any new tier exists.
+2. **Spec before code.** If a behavior is not written down, write it down first.
+3. **No infrastructure in the domain.** `internal/domain` imports only the standard library.
+4. **Prove it in a test.** Every lifecycle transition must have a test that would fail if the transition were wrong.
+5. **Indistinguishable failures.** Cross-tenant reads fail exactly like missing content — same code, same message, no timing leak.
+
+---
+
+## Phase 0 — Project Setup and Contract Alignment (done)
+
+**Goal:** Skeleton, config, migrations, Docker Compose, docs foundation.
+
+### Tasks
+
+- [x] Go module with hexagonal layout (`cmd/`, `internal/`, `pkg/`, `test/`, `migrations/`)
+- [x] Environment-first configuration (`internal/config`) with validation
+- [x] Migrations 000001–000004 (artifacts, retention, reference registry, audit log)
+- [x] Docker Compose (Postgres + MinIO + service) with healthchecks
+- [x] `docs/design.md`, `docs/implementation-plan.md`
+
+**Definition of done:** `go build ./...` and `go test ./...` pass; `docker compose up` starts Postgres and MinIO.
+
+---
+
+## Phase 1 — Core Conformance (current)
+
+**Goal:** A fully tested put/get core against real Postgres that can be demonstrated in an integration test.
+
+### First Milestone: "Round Trip in a Test"
+
+```go
+// test/integration/postgres_test.go
+func TestPutGetRoundTrip(t *testing.T) {
+    // Put payload for tenant A, get it back, verify bytes and digest.
+    // Put identical bytes again, assert same artifact id (dedup hit).
+    // Get as tenant B, assert ErrNotFound (indistinguishable).
+}
+```
+
+This test exercises: digest computation, tier routing, dedup by `(tenant_id, digest)`, tenant-scoped reads, integrity verification — all against a testcontainers Postgres. It mirrors the proposal §5 acceptance criteria 1–5.
+
+### Tasks
+
+- [x] `internal/domain/artifact.go` — Artifact, RetentionPolicy, sentinel errors
+- [x] `internal/port/store.go` — ContentStore port (Put/Get/Exists/MarkForDeletion/Register/Release/SetLegalHold/SetRetention)
+- [x] `pkg/digest`, `pkg/reference` — hashing and v1 reference encode/parse
+- [x] `internal/adapter/postgres` — pgx implementation with dedup, tenant scoping, audit
+- [x] `internal/adapter/http` — net/http REST adapter (put/get/head/capabilities/healthz/readyz)
+- [x] `cmd/content-api` — wiring, migrate-on-startup, graceful shutdown
+- [x] `test/integration/postgres_test.go` — TestMain with testcontainers, 12 tests
+- [ ] S3/MinIO backing for `s3` and `parquet` tiers (currently bytes stay in Postgres with the tier label recorded)
+- [ ] gRPC surface (currently HTTP only)
+- [ ] Background jobs (disposition, integrity sweep, orphan sweeper)
+
+**Definition of done:** `make test-integration` passes with `-race`; cross-tenant tests return indistinguishable `NOT_FOUND`; legal-hold changes are audited.
+
+---
+
+## Phase 2 — Commitix Adapter Design
+
+**Goal:** Java `ContentStore` port in the platform repo, agreed with this service.
+
+### Tasks
+
+- [ ] ADR for module placement (`java:content-cache-api`) and reference format
+- [ ] Java `ContentStore` interface (put/get/exists/register/release) + `ContentReference` parser
+- [ ] Contract tests shared with the Go suite (dedup, isolation, legal hold)
+- [ ] Feature flag hierarchy (per-tenant → per-intent-type → threshold → kill switch)
+- [ ] Migration plan for `commitix_intents` (`payload_kind`, `content_ref`, `payload_sha256`)
+
+**Definition of done:** Java contract tests green against both the in-memory fake and the Postgres-backed store.
+
+---
+
+## Phase 3 — Optional Large-Payload Adapter
+
+**Goal:** End-to-end externalization with failure taxonomy covered by tests.
+
+### Tasks
+
+- [ ] Commitix `ContentStore` HTTP client calling this service
+- [ ] Timeout and deadline propagation (2s connect, 5s read, 10s declare budget)
+- [ ] Retry bounded by the outer deadline (no extension on retry)
+- [ ] Observability metrics (externalized count, threshold histogram, put/get latency)
+
+**Definition of done:** Commit/rollback, remote-outage, checksum-failure, and orphan-cleanup contract tests pass.
+
+---
+
+## Phase 4 — Vertical Slice
+
+**Goal:** Ingestion → Content Cache → Eventing → Knowledge/Search with the reference in the event envelope.
+
+### Tasks
+
+- [ ] Event envelope carries `content_reference` (envelope-only, not payload)
+- [ ] Scripted end-to-end path reproducible via Docker Compose
+- [ ] All 12 acceptance criteria from proposal §5 green
+
+---
+
+## Phase 5 — Extended Lifecycle
+
+**Goal:** Operable service.
+
+- [ ] Disposition, integrity, orphan-sweeper, Parquet compactor jobs
+- [ ] Parquet batching tier and multi-region S3
+- [ ] Prometheus metrics endpoint and dashboards
+- [ ] `docs/runbook.md` incident procedures exercised
+
+---
+
+## What to Do Today
+
+1. Run `make test-integration` and confirm all 12 tests green.
+2. Run `CONTENT_API_KEY=secret docker compose up --build` and `curl localhost:8080/readyz`.
+3. Pick the S3/MinIO backing task from Phase 1 above.
+4. Write the integration test first (put 300 KiB, assert bytes land in MinIO), then implement.
+
+---
+
+## Definition of Done (per phase)
+
+A phase is complete when:
+
+- All tasks are checked off.
+- All tests pass with `-race`.
+- `go vet ./...` is clean.
+- The phase's acceptance criteria (above) are met.
+- `docs/design.md` reflects any behavior discovered during implementation.
+- `CHANGELOG.md` is updated.

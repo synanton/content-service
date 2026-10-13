@@ -1,0 +1,35 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+
+database:
+  url: postgres://content:content@localhost:5432/content?sslmode=disable
+  max_connections: 20
+
+s3:
+  endpoint: http://localhost:9000
+  bucket: synanton-content
+  region: us-east-1
+  use_path_style: true
+
+storage:
+  inline_threshold_bytes: 4096
+  object_threshold_bytes: 262144
+  parquet_batch_size: 1000
+  parquet_compression: zstd
+
+retention:
+  default_policy_days: 90
+  legal_hold_enabled: true
+  disposition_grace_period: 72h
+
+integrity:
+  verify_on_read: false
+  verify_on_publish: true
+  verification_interval: 24h
+  sample_rate: 0.01
+
+orphan:
+  grace_period: 24h
+  sweep_interval: 1h
+  dry_run: false
