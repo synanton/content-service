@@ -36,17 +36,17 @@ content-storage          ←── content-metadata (tier abstraction)
 
 ```
  ┌─────────────────────────────────────────────────────────────────┐
- │  content-api                                                     │
- │                                                                  │
- │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
- │   │  Put     │  │  Get     │  │  Head    │  │  Lifecycle    │  │
- │   │  path    │  │  path    │  │  path    │  │  path         │  │
- │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬────────┘  │
+ │  content-api                                                    │
+ │                                                                 │
+ │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐   │
+ │   │  Put     │  │  Get     │  │  Head    │  │  Lifecycle    │   │
+ │   │  path    │  │  path    │  │  path    │  │  path         │   │
+ │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬────────┘   │
  │        │             │             │               │            │
  │        ▼             ▼             ▼               ▼            │
- │   ┌─────────────────────────────────────────────────────────┐    │
- │   │  Tenant authorization + integrity verification           │    │
- │   └─────────────────────────────────────────────────────────┘    │
+ │   ┌─────────────────────────────────────────────────────────┐   │
+ │   │  Tenant authorization + integrity verification          │   │
+ │   └─────────────────────────────────────────────────────────┘   │
  └──────────┬──────────────────────────────────────────────────────┘
             │
             ▼
@@ -76,19 +76,15 @@ Thresholds are configurable and benchmarked. The tier is an implementation
 detail — the reference is opaque.
 
 ---
-
 ## Retention Precedence
 
 Retention is evaluated at disposition time, not publication time:
 
-  ------------------------------------------------------------------------
-  Priority    Policy           Behavior
-  ----------  ---------------  ----------------------------------------------
-  1 (high)    Legal hold       Blocks disposition regardless of retention.
-  2           Tenant retention Minimum for all tenant content. Owner cannot
-                              shorten.
-  3           Owner retention  May extend tenant retention. Never shorten.
-  ------------------------------------------------------------------------
+| Priority | Policy | Behavior |
+|:---:|---|---|
+| 1 (high) | Legal hold | Blocks disposition regardless of retention. |
+| 2 | Tenant retention | Minimum for all tenant content. Owner cannot shorten. |
+| 3 | Owner retention | May extend tenant retention. Never shorten. |
 
 S3 lifecycle manages tier transitions, never physical deletion.
 
