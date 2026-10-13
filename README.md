@@ -305,6 +305,7 @@ Key references:
 - Contract: Synanton Design 1.26 (Content Cache plane)
 - Integration: approved proposal v3 (15 decisions in the TL;DR table)
 - Local: `docs/design.md` (§3 tiers, §4 reference, §5 retention, §6 API)
+- Developer book: [synanton.github.io/content-service](https://synanton.github.io/content-service/) (`docs/` built with mdBook on every merge, same toolchain as equalix-go)
 
 ---
 

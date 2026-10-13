@@ -17,6 +17,9 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
 - Design 1.26 conformance suite extended to 14 checks (tier recording,
   release-vs-retention separation, head consistency, register idempotency)
   and run against the fake (unit) and Postgres + MinIO (integration).
+- mdBook developer documentation (`docs/book.toml`, `docs/SUMMARY.md`,
+  `docs/index.md`) published to GitHub Pages by `.github/workflows/docs.yml`
+  on every merge touching `docs/`.
 - Background jobs (`cmd/disposition-job`, `cmd/integrity-job`, `cmd/orphan-sweeper`, `cmd/parquet-compactor`): ticker runner with immediate first run, Postgres advisory-lock leadership, tenant-hash sharding, Prometheus metrics, Compose `jobs` profile.
 - Migration `000005_parquet_files` (`parquet_files` table + artifact row pointers).
 

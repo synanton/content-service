@@ -1,0 +1,19 @@
+[book]
+title = "content-service Developer Documentation"
+authors = ["Andrei Minin"]
+description = "Developer guide, architecture, API and operations for the content-service Content Cache 1.26 reference implementation"
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+
+[output.html]
+site-url = "/content-service/"
+git-repository-url = "https://github.com/synanton/content-service"
+edit-url-template = "https://github.com/synanton/content-service/edit/main/docs/{path}"
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
