@@ -51,6 +51,25 @@ func blobKey(tenantID, digest string) string {
 	return BlobKey(tenantID, digest)
 }
 
+// adoptArtifact registers the caller's owner against an already-published
+// artifact and returns it as a dedup hit.
+func (s *Store) adoptArtifact(
+	ctx context.Context, p port.PutParams, artifactID, computed string,
+) (*port.PutResult, error) {
+	ref := reference.New(p.TenantID, artifactID, computed, 1, p.SerializerVersion)
+	if len(ref.Encode()) > 512 {
+		return nil, domain.ErrReferenceTooLong
+	}
+	if err := s.registerReference(ctx, p.TenantID, computed, p.OwnerID); err != nil {
+		return nil, err
+	}
+	art, err := s.loadArtifact(ctx, p.TenantID, artifactID)
+	if err != nil {
+		return nil, err
+	}
+	return &port.PutResult{Artifact: *art, DedupHit: true}, nil
+}
+
 func (s *Store) selectTier(size int64) string {
 	if size < int64(s.cfg.Storage.InlineThresholdBytes) {
 		return "inline"
@@ -68,6 +87,14 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 	if len(p.Payload) == 0 {
 		return nil, fmt.Errorf("%w: payload is empty", domain.ErrInvalidArgument)
 	}
+	return s.put(ctx, p, 3)
+}
+
+// put persists one artifact, retrying a bounded number of times when a
+// concurrent put or a racing disposition invalidates the dedup decision
+// mid-flight. Every retry redoes idempotent blob writes (same keys, same
+// bytes) before re-reading, so retries never duplicate stored content.
+func (s *Store) put(ctx context.Context, p port.PutParams, retries int) (*port.PutResult, error) {
 	computed := digest.Compute(p.Payload)
 	tier := s.selectTier(int64(len(p.Payload)))
 	retentionDays := p.RetentionDays
@@ -76,25 +103,14 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 	}
 	expiresAt := time.Now().UTC().Add(time.Duration(retentionDays) * 24 * time.Hour)
 
-	var artifactID, storedDigest string
+	var artifactID string
 	err := s.pool.QueryRow(ctx, `
-		SELECT artifact_id::text, digest FROM artifacts
+		SELECT artifact_id::text FROM artifacts
 		WHERE tenant_id = $1 AND digest = $2`,
 		p.TenantID, computed,
-	).Scan(&artifactID, &storedDigest)
+	).Scan(&artifactID)
 	if err == nil {
-		ref := reference.New(p.TenantID, artifactID, computed, 1, p.SerializerVersion)
-		if len(ref.Encode()) > 512 {
-			return nil, domain.ErrReferenceTooLong
-		}
-		if err := s.registerReference(ctx, p.TenantID, computed, p.OwnerID); err != nil {
-			return nil, err
-		}
-		art, err := s.loadArtifact(ctx, p.TenantID, artifactID)
-		if err != nil {
-			return nil, err
-		}
-		return &port.PutResult{Artifact: *art, DedupHit: true}, nil
+		return s.adoptArtifact(ctx, p, artifactID, computed)
 	}
 	if err != nil && !isNoRows(err) {
 		return nil, fmt.Errorf("dedup lookup: %w", err)
@@ -146,7 +162,7 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 			return nil, fmt.Errorf("insert parquet file: %w", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `
+	cmd, err := tx.Exec(ctx, `
 		INSERT INTO artifacts
 			(tenant_id, artifact_id, digest, generation, serializer_version,
 			 content_type, size_bytes, storage_tier, payload, expires_at,
@@ -156,8 +172,33 @@ func (s *Store) Put(ctx context.Context, p port.PutParams) (*port.PutResult, err
 		p.TenantID, artifactID, computed, p.SerializerVersion,
 		p.ContentType, len(p.Payload), tier, inline, expiresAt,
 		nullUUID(fileID), rowIdx,
-	); err != nil {
+	)
+	if err != nil {
 		return nil, fmt.Errorf("insert artifact: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		// Lost the insert race: a concurrent put committed first while our
+		// speculative insertion waited. Roll back (our parquet file row, if
+		// any, rolls back too; an already-written parquet object becomes an
+		// unlisted orphan the sweeper heals) and adopt the winner instead of
+		// failing with a foreign key violation.
+		_ = tx.Rollback(ctx)
+		var winner string
+		err := s.pool.QueryRow(ctx, `
+			SELECT artifact_id::text FROM artifacts
+			WHERE tenant_id = $1 AND digest = $2`,
+			p.TenantID, computed,
+		).Scan(&winner)
+		if isNoRows(err) {
+			if retries <= 0 {
+				return nil, fmt.Errorf("put: lost to racing disposition, retry the request")
+			}
+			return s.put(ctx, p, retries-1)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("adopt winner: %w", err)
+		}
+		return s.adoptArtifact(ctx, p, winner, computed)
 	}
 
 	if _, err := tx.Exec(ctx, `
