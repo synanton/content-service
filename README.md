@@ -16,7 +16,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 **Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
 
-*State as of 2026-10-13 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 42 integration tests green.*
+*State as of 2026-10-14 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 42 integration tests green. Security Provider handshake (D.1/D.2): opt-in context authentication on HTTP + gRPC, tenant derived from validated context, negative battery green.*
 
 ### Maturity
 
@@ -26,6 +26,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 | Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core+Extended suite) | ✅ (tier benches) |
 | HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ✅ (roundtrip bench) |
 | gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ✅ (roundtrip bench) |
+| Context authentication (Security Provider middleware, opt-in) | ✅ | ✅ (unit + bufconn + testcontainers D.1/D.2) | ⬜ | ⬜ |
 | Reference registry (register/release) | ✅ | ✅ | ✅ (Core suite) | ⬜ |
 | Legal hold + audit trail | ✅ | ✅ | ✅ (Core suite) | ⬜ |
 | S3/MinIO backing for object tiers | ✅ | ✅ (testcontainers minio) | ⬜ | ✅ (tier benches) |
@@ -199,6 +200,19 @@ grpcurl -plaintext \
   localhost:50051 content.v1.ContentService/Put
 ```
 
+### Authentication (opt-in, joint-plan D.1/D.2)
+
+By default tenant scope is **unauthenticated**: `X-Tenant-ID` / `?tenant_id=` / body field selects the tenant and nothing verifies the caller owns it. Do not expose the default configuration to untrusted networks.
+
+Set `CONTENT_AUTH_ENABLED=true` (plus `CONTENT_AUTH_HMAC_KEY` ≥ 32 bytes) to validate Security Provider contexts on HTTP and gRPC. The tenant is then derived from the validated context; mismatched hints (`X-Tenant-ID`, `?tenant_id=`, body `tenant_id`, `x-tenant-id` metadata) are rejected (`403` / `PermissionDenied`), unsigned `X-User-ID` headers are rejected, and cross-tenant reads stay indistinguishable `404`s. Denials are audited. See `docs/api.md` for the contract.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/artifacts \
+  -H "Authorization: Bearer <context_token>" \
+  -H "Content-Type: application/json" \
+  -d "{\"payload\":\"$PAYLOAD\",\"content_type\":\"text/plain\",\"owner_id\":\"demo\"}"
+```
+
 ---
 
 ## Configuration Reference
@@ -216,6 +230,9 @@ grpcurl -plaintext \
 | `CONTENT_JOBS_BATCH_SIZE` | `1000` | Row cap per sweep query |
 | `CONTENT_JOBS_SHARD_INDEX` / `CONTENT_JOBS_SHARD_COUNT` | `0` / `1` | Integrity tenant sharding |
 | `CONTENT_API_KEY` | — (empty) | Reserved for gateway auth (Compose requires it set) |
+| `CONTENT_AUTH_ENABLED` | `false` | Validate Security Provider contexts on HTTP + gRPC (D.1/D.2) |
+| `CONTENT_AUTH_HMAC_KEY` | — (required when enabled) | Context-signing key, min 32 bytes |
+| `CONTENT_AUTH_ISSUER` | `synanton-security-provider` | Expected context issuer |
 | `CONTENT_MIGRATE_ON_STARTUP` | `false` | Opt-in; applies `migrations/*.up.sql` before serving |
 | `CONTENT_MIGRATIONS_DIR` | `migrations` | Override for inspect-first operators |
 | `CONTENT_INLINE_THRESHOLD_BYTES` | `4096` | Below this: `inline` tier label |

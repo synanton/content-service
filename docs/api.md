@@ -11,6 +11,7 @@ The gRPC contract is defined in `proto/content/v1/content.proto` (generated stub
 - **Base path:** `/api/v1`.
 - **Content type:** `application/json` for `POST` with body; `Accept: application/json`.
 - **Tenant scope:** every request carries `tenant_id` via the `X-Tenant-ID` header (preferred), the `tenant_id` query parameter, or the JSON body field. Header wins when several are present.
+- **Authentication (opt-in):** with `CONTENT_AUTH_ENABLED=true`, requests carry `Authorization: Bearer <context_token>` (gRPC: `authorization` metadata) issued by the Security Provider. The tenant is then derived from the validated context: a present-but-mismatched hint (`X-Tenant-ID`, `?tenant_id=`, body `tenant_id`, `x-tenant-id` metadata) is rejected with `403 CONFLICTING_TENANT` (gRPC: `PermissionDenied`), missing/invalid/expired tokens with `401` (gRPC: `Unauthenticated`), and a disagreeing `X-User-ID` with `403`. Without the flag, tenant scope is unauthenticated (dev only).
 - **Binary fields** (`payload`): JSON base64 strings.
 - **Error shape:**
 

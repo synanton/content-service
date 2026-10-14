@@ -14,7 +14,7 @@
 # user 65532. The API server serves docker --health-cmd via /readyz;
 # jobs are ticker loops with no health endpoint by construction.
 
-ARG GO_VERSION=1.22
+ARG GO_VERSION=1.23
 
 FROM golang:${GO_VERSION}-bookworm AS build
 WORKDIR /src
