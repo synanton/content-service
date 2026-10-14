@@ -16,7 +16,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 **Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
 
-*State as of 2026-10-14 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 42 integration tests green. Security Provider handshake (D.1/D.2): opt-in context authentication on HTTP + gRPC, tenant derived from validated context, negative battery green.*
+*State as of 2026-10-14 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 51 integration tests green, workload scenarios measured.*
 
 ### Maturity
 
@@ -279,6 +279,22 @@ Each job runs immediately on start, then on its tick, and exits cleanly on SIGTE
 
 ---
 
+## Performance
+
+Measured on local containers (i9-12900T, Postgres 16 + MinIO); full tables with provenance in [`docs/benchmarks.md`](docs/benchmarks.md). Evidence, not SLOs.
+
+| Workload | Result |
+|---|---|
+| Mixed sizes (100 B–1 MiB), 1 worker | p50 ~3 ms, p99 ~24 ms, 0 errors |
+| Throughput, 1 → 4 → 16 → 64 workers | ~180 → ~950 → ~4700 → ~6200 ops/sec, 0 errors (pool-capped past 16) |
+| 30 s sustained churn (6.2k ops, 12 sweeps) | 0 errors; p50 ~1.2 ms, p99 ~25 ms |
+| Tier cliff at 4 KiB | one byte flips put ×6 and get ×90 |
+| MinIO killed mid-test | traffic fails fast; after restart, pre-outage bytes read back intact |
+
+Reproduce with `make bench-integration` (bounded) or `BENCHTIME=1000x` (precision). Never gate PRs on absolute numbers.
+
+---
+
 ## Development
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, gates, and review checklists.
@@ -325,7 +341,7 @@ Design 1.26 is the contract; this repo is one conformant implementation. The ser
 
 - Preserves tenant isolation, content-addressable dedup, and the retention lattice
 - Replaces storage-specific mechanisms (bucket layouts, lifecycle rules) with the port contract
-- Is validated by the integration suite in `test/integration/` (42 tests against real Postgres + MinIO) plus the 14-check conformance suite
+- Is validated by the integration suite in `test/integration/` (51 tests against real Postgres + MinIO) plus the 14-check conformance suite
 
 Key references:
 

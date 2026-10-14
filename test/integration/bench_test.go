@@ -28,11 +28,106 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	contentv1 "github.com/synanton/content-service/gen/content/v1"
+	adapterpg "github.com/synanton/content-service/internal/adapter/postgres"
 	grpchandler "github.com/synanton/content-service/internal/adapter/grpc"
 	httphandler "github.com/synanton/content-service/internal/adapter/http"
 	"github.com/synanton/content-service/internal/jobs"
 	"github.com/synanton/content-service/internal/port"
 )
+
+// storeWithThresholds returns a store identical to the shared one except
+// for tier routing, isolating the tier effect at a fixed payload size.
+func storeWithThresholds(inlineThreshold, objectThreshold int) *adapterpg.Store {
+	custom := *cfg
+	custom.Storage.InlineThresholdBytes = inlineThreshold
+	custom.Storage.ObjectThresholdBytes = objectThreshold
+	return adapterpg.NewStore(pool, &custom, blobs, rows)
+}
+
+// BenchmarkTierCliff measures put+get around the 4 KiB inline boundary with
+// the default thresholds, one sub-benchmark per size.
+func BenchmarkTierCliff(b *testing.B) {
+	for _, size := range []int{4095, 4096, 4097, 8192} {
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			tn := benchTenant()
+			var putLat, getLat latencies
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				payload := sizedPayload('c', size, uint64(i))
+				start := time.Now()
+				res, err := store.Put(ctx, port.PutParams{
+					TenantID: tn, Payload: payload, OwnerID: "bench", RetentionDays: 30,
+				})
+				putLat.add(time.Since(start))
+				if err != nil {
+					b.Fatalf("put: %v", err)
+				}
+				if i == 0 {
+					b.Logf("size=%d tier=%s", size, res.Artifact.StorageTier)
+				}
+				start = time.Now()
+				data, _, err := store.Get(ctx, tn, res.Artifact.ArtifactID)
+				getLat.add(time.Since(start))
+				if err != nil {
+					b.Fatalf("get: %v", err)
+				}
+				if len(data) != size {
+					b.Fatalf("size = %d, want %d", len(data), size)
+				}
+			}
+			b.StopTimer()
+			putLat.reportSuffixed(b, "put")
+			getLat.reportSuffixed(b, "get")
+		})
+	}
+}
+
+// BenchmarkSamePayloadAllTiers measures the same 300 KiB payload forced
+// through each tier via threshold overrides, isolating tier cost from size.
+func BenchmarkSamePayloadAllTiers(b *testing.B) {
+	const size = 300 * 1024
+	cases := []struct {
+		tier  string
+		store *adapterpg.Store
+	}{
+		{"inline", storeWithThresholds(1 << 20, 1 << 24)},
+		{"parquet", storeWithThresholds(100, 1 << 24)},
+		{"s3", store},
+	}
+	for _, tc := range cases {
+		b.Run("tier="+tc.tier, func(b *testing.B) {
+			tn := benchTenant()
+			var putLat, getLat latencies
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				payload := sizedPayload('s', size, uint64(i))
+				start := time.Now()
+				res, err := tc.store.Put(ctx, port.PutParams{
+					TenantID: tn, Payload: payload, OwnerID: "bench", RetentionDays: 30,
+				})
+				putLat.add(time.Since(start))
+				if err != nil {
+					b.Fatalf("put: %v", err)
+				}
+				if res.Artifact.StorageTier != tc.tier {
+					b.Fatalf("tier = %s, want %s", res.Artifact.StorageTier, tc.tier)
+				}
+				start = time.Now()
+				data, _, err := tc.store.Get(ctx, tn, res.Artifact.ArtifactID)
+				getLat.add(time.Since(start))
+				if err != nil {
+					b.Fatalf("get: %v", err)
+				}
+				if len(data) != size {
+					b.Fatalf("size = %d, want %d", len(data), size)
+				}
+			}
+			b.StopTimer()
+			putLat.reportSuffixed(b, "put")
+			getLat.reportSuffixed(b, "get")
+		})
+	}
+}
 
 var benchTenantSeq atomic.Uint64
 
@@ -67,12 +162,20 @@ func (l *latencies) quantile(q float64) time.Duration {
 }
 
 func (l *latencies) report(b *testing.B) {
-	b.ReportMetric(float64(l.quantile(0.50).Microseconds())/1000.0, "p50-ms")
-	b.ReportMetric(float64(l.quantile(0.95).Microseconds())/1000.0, "p95-ms")
-	b.ReportMetric(float64(l.quantile(0.99).Microseconds())/1000.0, "p99-ms")
-	b.Logf("ops=%d p50=%v p95=%v p99=%v", len(l.durs),
-		l.quantile(0.50).Round(10*time.Microsecond),
-		l.quantile(0.95).Round(10*time.Microsecond),
+	l.reportSuffixed(b, "")
+}
+
+func (l *latencies) reportSuffixed(b *testing.B, name string) {
+	prefix := ""
+	if name != "" {
+		prefix = name + "-"
+	}
+	b.ReportMetric(float64(l.quantile(0.50).Microseconds())/1000.0, prefix+"p50-ms")
+	b.ReportMetric(float64(l.quantile(0.95).Microseconds())/1000.0, prefix+"p95-ms")
+	b.ReportMetric(float64(l.quantile(0.99).Microseconds())/1000.0, prefix+"p99-ms")
+	b.Logf("ops=%d %sp50=%v %sp95=%v %sp99=%v", len(l.durs), prefix,
+		l.quantile(0.50).Round(10*time.Microsecond), prefix,
+		l.quantile(0.95).Round(10*time.Microsecond), prefix,
 		l.quantile(0.99).Round(10*time.Microsecond))
 }
 

@@ -28,12 +28,13 @@ import (
 )
 
 var (
-	ctx   = context.Background()
-	pool  *pgxpool.Pool
-	store *adapterpg.Store
-	blobs port.BlobStore
-	rows  *parquet.Reader
-	cfg   *config.Config
+	ctx            = context.Background()
+	pool           *pgxpool.Pool
+	store          *adapterpg.Store
+	blobs          port.BlobStore
+	rows           *parquet.Reader
+	cfg            *config.Config
+	minioContainer testcontainers.Container
 )
 
 func TestMain(m *testing.M) {
@@ -57,7 +58,9 @@ func TestMain(m *testing.M) {
 func startMinio(ctx context.Context) (*s3adapter.Store, error) {
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image: "minio/minio:latest",
+			// Digest-pinned for reproducible benchmarks; never float this
+			// to :latest (historical comparisons would silently drift).
+			Image: "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
 			Env: map[string]string{
 				"MINIO_ROOT_USER":     "minioadmin",
 				"MINIO_ROOT_PASSWORD": "minioadmin",
@@ -71,6 +74,7 @@ func startMinio(ctx context.Context) (*s3adapter.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("start minio: %w", err)
 	}
+	minioContainer = container
 	host, err := container.Host(ctx)
 	if err != nil {
 		return nil, err
