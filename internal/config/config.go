@@ -77,6 +77,18 @@ type SecurityConfig struct {
 	MTLSKey      string
 	KMSKeyID     string
 	AuditEnabled bool
+	Auth         AuthConfig
+}
+
+// AuthConfig controls validation of Security Provider contexts
+// (joint-plan D.1/D.2). Disabled by default: when disabled, tenant
+// scope behaves exactly as before (X-Tenant-ID header, documented as
+// unauthenticated). When enabled, the tenant is derived from the
+// validated context and caller hints are cross-checked.
+type AuthConfig struct {
+	Enabled bool
+	HMACKey string
+	Issuer  string
 }
 
 type ObservabilityConfig struct {
@@ -138,6 +150,11 @@ func Load() (*Config, error) {
 			MTLSKey:      getEnv("CONTENT_MTLS_KEY", ""),
 			KMSKeyID:     getEnv("CONTENT_KMS_KEY_ID", ""),
 			AuditEnabled: getEnvBool("CONTENT_AUDIT_ENABLED", true),
+			Auth: AuthConfig{
+				Enabled: getEnvBool("CONTENT_AUTH_ENABLED", false),
+				HMACKey: getEnv("CONTENT_AUTH_HMAC_KEY", ""),
+				Issuer:  getEnv("CONTENT_AUTH_ISSUER", "synanton-security-provider"),
+			},
 		},
 		Observability: ObservabilityConfig{
 			LogLevel:        getEnv("CONTENT_LOG_LEVEL", "info"),
@@ -195,6 +212,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Jobs.ShardCount <= 0 || c.Jobs.ShardIndex < 0 || c.Jobs.ShardIndex >= c.Jobs.ShardCount {
 		return fmt.Errorf("jobs shard index must satisfy 0 <= index < count")
+	}
+	if c.Security.Auth.Enabled && len(c.Security.Auth.HMACKey) < 32 {
+		return fmt.Errorf("auth HMAC key must be at least 32 bytes when CONTENT_AUTH_ENABLED=true")
 	}
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 	"github.com/synanton/content-service/pkg/reference"
 )
 
@@ -51,14 +52,26 @@ type errorBody struct {
 	Message string `json:"message"`
 }
 
-func (h *Handler) tenantOf(r *http.Request, bodyTenant string) string {
+// tenantOf resolves the request tenant. When a validated security
+// context is present (authentication enabled), its tenant governs and
+// every caller hint (header, query, body) is cross-checked: a mismatch
+// fails with ErrTenantMismatch and must surface as 403. Otherwise the
+// legacy unauthenticated header > query > body resolution applies.
+func (h *Handler) tenantOf(r *http.Request, bodyTenant string) (string, error) {
+	if tenant, err := security.ResolveTenant(r.Context(),
+		r.Header.Get("X-Tenant-ID"), r.URL.Query().Get("tenant_id"), bodyTenant,
+	); err != nil {
+		return "", err
+	} else if tenant != "" {
+		return tenant, nil
+	}
 	if t := r.Header.Get("X-Tenant-ID"); t != "" {
-		return t
+		return t, nil
 	}
 	if t := r.URL.Query().Get("tenant_id"); t != "" {
-		return t
+		return t, nil
 	}
-	return bodyTenant
+	return bodyTenant, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
@@ -77,7 +90,11 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid JSON body")
 		return
 	}
-	tenantID := h.tenantOf(r, req.TenantID)
+	tenantID, err := h.tenantOf(r, req.TenantID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "CONFLICTING_TENANT", "tenant hint conflicts with authenticated context")
+		return
+	}
 	if tenantID == "" {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "tenant_id is required")
 		return
@@ -126,7 +143,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "artifact id is required")
 		return
 	}
-	tenantID := h.tenantOf(r, "")
+	tenantID, err := h.tenantOf(r, "")
+	if err != nil {
+		writeError(w, http.StatusForbidden, "CONFLICTING_TENANT", "tenant hint conflicts with authenticated context")
+		return
+	}
 	if tenantID == "" {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "tenant_id is required")
 		return
@@ -153,7 +174,11 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "artifact id is required")
 		return
 	}
-	tenantID := h.tenantOf(r, "")
+	tenantID, err := h.tenantOf(r, "")
+	if err != nil {
+		writeError(w, http.StatusForbidden, "CONFLICTING_TENANT", "tenant hint conflicts with authenticated context")
+		return
+	}
 	if tenantID == "" {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "tenant_id is required")
 		return

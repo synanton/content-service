@@ -12,13 +12,16 @@ import (
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 	"github.com/synanton/content-service/pkg/reference"
 )
 
 // Server implements the ContentService gRPC contract over a port.ContentStore.
 // Tenant scope travels in request fields (same contract as the REST
 // X-Tenant-ID header); cross-tenant reads fail with NotFound,
-// indistinguishable from missing content.
+// indistinguishable from missing content. When authentication is enabled
+// (interceptor injects a validated security context), the context tenant
+// governs and a conflicting message field fails with PermissionDenied.
 type Server struct {
 	contentv1.UnimplementedContentServiceServer
 	store port.ContentStore
@@ -29,10 +32,28 @@ func NewServer(store port.ContentStore) *Server {
 	return &Server{store: store}
 }
 
+// tenantOf resolves the request tenant. When a validated security
+// context is present (authentication enabled via interceptor), its tenant
+// governs and the message field is cross-checked: a mismatch fails with
+// PermissionDenied. Otherwise the legacy unauthenticated message field
+// applies.
+func tenantOf(ctx context.Context, hint string) (string, error) {
+	if tenant, err := security.ResolveTenant(ctx, hint); err != nil {
+		return "", status.Error(codes.PermissionDenied, "conflicting tenant claim")
+	} else if tenant != "" {
+		return tenant, nil
+	}
+	return hint, nil
+}
+
 func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1.PutResponse, error) {
 	start := time.Now()
+	tenantID, err := tenantOf(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
 	res, err := s.store.Put(ctx, port.PutParams{
-		TenantID:          req.GetTenantId(),
+		TenantID:          tenantID,
 		Payload:           req.GetPayload(),
 		ContentType:       req.GetContentType(),
 		OwnerID:           req.GetOwnerId(),
@@ -40,13 +61,13 @@ func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1
 		SerializerVersion: int(req.GetSerializerVersion()),
 	})
 	if err != nil {
-		observability.PutErrors.WithLabelValues(req.GetTenantId()).Inc()
+		observability.PutErrors.WithLabelValues(tenantID).Inc()
 		return nil, toStatus(err)
 	}
 	observability.PutLatency.WithLabelValues(
-		req.GetTenantId(), res.Artifact.StorageTier).Observe(time.Since(start).Seconds())
+		tenantID, res.Artifact.StorageTier).Observe(time.Since(start).Seconds())
 	ref := reference.New(
-		req.GetTenantId(),
+		tenantID,
 		res.Artifact.ArtifactID,
 		res.Artifact.Digest,
 		res.Artifact.Generation,
@@ -63,13 +84,17 @@ func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1
 
 func (s *Server) Get(ctx context.Context, req *contentv1.GetRequest) (*contentv1.GetResponse, error) {
 	start := time.Now()
-	data, art, err := s.store.Get(ctx, req.GetTenantId(), req.GetArtifactId())
+	tenantID, err := tenantOf(ctx, req.GetTenantId())
 	if err != nil {
-		observability.GetErrors.WithLabelValues(req.GetTenantId()).Inc()
+		return nil, err
+	}
+	data, art, err := s.store.Get(ctx, tenantID, req.GetArtifactId())
+	if err != nil {
+		observability.GetErrors.WithLabelValues(tenantID).Inc()
 		return nil, toStatus(err)
 	}
 	observability.GetLatency.WithLabelValues(
-		req.GetTenantId(), art.StorageTier).Observe(time.Since(start).Seconds())
+		tenantID, art.StorageTier).Observe(time.Since(start).Seconds())
 	return &contentv1.GetResponse{
 		Payload:     data,
 		Digest:      art.Digest,
@@ -79,7 +104,11 @@ func (s *Server) Get(ctx context.Context, req *contentv1.GetRequest) (*contentv1
 }
 
 func (s *Server) Head(ctx context.Context, req *contentv1.HeadRequest) (*contentv1.HeadResponse, error) {
-	ok, err := s.store.Exists(ctx, req.GetTenantId(), req.GetArtifactId())
+	tenantID, err := tenantOf(ctx, req.GetTenantId())
+	if err != nil {
+		return nil, err
+	}
+	ok, err := s.store.Exists(ctx, tenantID, req.GetArtifactId())
 	if err != nil {
 		return nil, toStatus(err)
 	}

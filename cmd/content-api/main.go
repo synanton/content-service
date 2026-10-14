@@ -25,6 +25,8 @@ import (
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
+	"github.com/synanton/security-provider/pkg/middleware"
 )
 
 var version = "dev"
@@ -63,11 +65,30 @@ func main() {
 
 	store := postgres.NewStore(pool, cfg, blobs, rows)
 	h := httphandler.NewHandler(store)
+	auditor := security.NewAuditor(cfg.Security.AuditEnabled)
+
+	verifier, err := security.NewVerifier(cfg.Security.Auth)
+	if err != nil {
+		log.Fatalf("auth: %v", err)
+	}
+	requireAuth := func(next http.Handler) http.Handler {
+		if verifier == nil {
+			return next
+		}
+		return middleware.RequireAuth(verifier, middleware.WithAudit(func(ev middleware.AuditEvent) {
+			if ev.Outcome == "denied" {
+				auditor.Record(context.Background(), security.AuditEvent{
+					Actor: "auth", Action: "auth.denied",
+					TenantID: ev.TenantID, Reason: ev.ReasonCode,
+				})
+			}
+		}))(next)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/artifacts", h.Put)
-	mux.HandleFunc("GET /api/v1/artifacts/", h.Get)
-	mux.HandleFunc("HEAD /api/v1/artifacts/", h.Head)
+	mux.Handle("POST /api/v1/artifacts", requireAuth(http.HandlerFunc(h.Put)))
+	mux.Handle("GET /api/v1/artifacts/", requireAuth(http.HandlerFunc(h.Get)))
+	mux.Handle("HEAD /api/v1/artifacts/", requireAuth(http.HandlerFunc(h.Head)))
 	mux.HandleFunc("GET /api/v1/capabilities", h.Capabilities)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -90,7 +111,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("grpc listen: %v", err)
 	}
-	grpcSrv := grpc.NewServer()
+	grpcOpts := []grpc.ServerOption{}
+	if verifier != nil {
+		grpcOpts = append(grpcOpts, grpc.ChainUnaryInterceptor(middleware.UnaryServerInterceptor(verifier)))
+		log.Printf("authentication enabled: contexts validated, tenant derived from context")
+	} else {
+		log.Printf("authentication disabled: tenant scope is unauthenticated (dev only)")
+	}
+	grpcSrv := grpc.NewServer(grpcOpts...)
 	contentv1.RegisterContentServiceServer(grpcSrv, grpchandler.NewServer(store))
 	reflection.Register(grpcSrv)
 
