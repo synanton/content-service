@@ -292,6 +292,16 @@ See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the phased plan and t
 
 ---
 
+## Documentation
+
+Developer documentation is published as a book at [synanton.github.io/content-service](https://synanton.github.io/content-service/), built from `docs/` with mdBook on every merge:
+
+- **Using** — HTTP and gRPC API reference, operator runbook
+- **Architecture** — architecture overview, design document, schema reference
+- **Developing** — implementation guide and plan
+
+---
+
 ## Relation to Design 1.26
 
 Design 1.26 is the contract; this repo is one conformant implementation. The service:
@@ -305,7 +315,7 @@ Key references:
 - Contract: Synanton Design 1.26 (Content Cache plane)
 - Integration: approved proposal v3 (15 decisions in the TL;DR table)
 - Local: `docs/design.md` (§3 tiers, §4 reference, §5 retention, §6 API)
-- Developer book: [synanton.github.io/content-service](https://synanton.github.io/content-service/) (`docs/` built with mdBook on every merge, same toolchain as equalix-go)
+- Developer documentation: [synanton.github.io/content-service](https://synanton.github.io/content-service/) (see above)
 
 ---
 
