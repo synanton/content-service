@@ -112,6 +112,11 @@ test-integration:
 
 Both `ryuk:0.8.1` (v0.33.0 default) and `ryuk:0.12.0` (override) are cached locally; the override matches equalix-go and avoids reaper-image pull surprises.
 
+Pin every container image used in benchmarks by digest, not tag
+(`minio/minio@sha256:14cea...`, never `:latest`): historical benchmark
+comparisons silently drift otherwise. Record the pinned digest in
+`docs/benchmarks.md` provenance alongside the run.
+
 ## Benchmark methodology (observed 2026-10-14, keep in mind when reading logs)
 
 - In this toolchain, `go test -bench` with count-form `-benchtime=Nx`

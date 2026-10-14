@@ -16,7 +16,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 **Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
 
-*State as of 2026-10-13 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 42 integration tests green.*
+*State as of 2026-10-14 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 49 integration tests green.*
 
 ### Maturity
 
@@ -308,7 +308,7 @@ Design 1.26 is the contract; this repo is one conformant implementation. The ser
 
 - Preserves tenant isolation, content-addressable dedup, and the retention lattice
 - Replaces storage-specific mechanisms (bucket layouts, lifecycle rules) with the port contract
-- Is validated by the integration suite in `test/integration/` (42 tests against real Postgres + MinIO) plus the 14-check conformance suite
+- Is validated by the integration suite in `test/integration/` (49 tests against real Postgres + MinIO) plus the 14-check conformance suite
 
 Key references:
 
