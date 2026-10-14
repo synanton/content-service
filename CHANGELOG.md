@@ -34,6 +34,8 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
 
 - `BlobKey` took the pre-colon half of the digest, collapsing every tenant's objects onto one S3 key; keys are now `<tenant>/<digest-hex>`.
 - Single-row Parquet files stored `parquet_row_idx=1` for 0-indexed rows; fresh files now record row 0.
+- Concurrent duplicate puts no longer fail with foreign-key violations: insert losers roll back and adopt the winner's reference (`dedupHit=true`), retrying whole-heartedly if disposition raced the put.
+- Review response: `docs/reviews/2026-10-14-external-review-response.md` maps the external review's P0/P1 findings to fixed/tested/planned with file and test pointers.
 
 ## [0.1.0] - 2026-10-13
 
