@@ -42,6 +42,10 @@ make proto
 > `go.mod`, silently breaking `make test-integration` for the next person.
 > Add adapter dependencies with explicit `go get module@version` instead.
 
+> **Tooling note:** if `gh pr edit` fails silently in this environment
+> (GraphQL blocked), update PR metadata via the REST API instead, e.g.
+> `gh api repos/synanton/content-service/pulls/<n> -X PATCH -f body="..."`.
+
 ---
 
 ## Repository Layout
