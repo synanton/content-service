@@ -13,8 +13,8 @@ p50 measured 48µs and 330µs across two runs on the same host).
 | CPU | 12th Gen Intel i9-12900T, linux/amd64, 24 threads (`-24` in output) |
 | Toolchain | go 1.22.2, module directive `go 1.22` |
 | Postgres | `postgres:16-alpine` via testcontainers |
-| Object storage | `minio/minio:latest` via testcontainers (GenericContainer) |
-| Iterations | `-benchtime=100x` (`make bench-integration`); micro-benches default scaling |
+| Object storage | `minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e` via testcontainers (GenericContainer, digest-pinned) |
+| Iterations | `-benchtime=100x` (`make bench-integration`); precision runs `-benchtime=1000x` (`make bench-integration BENCHTIME=1000x`); micro-benches default scaling |
 
 ## How to reproduce
 
@@ -37,6 +37,11 @@ make bench-integration     # full stack: tiers, handlers, jobs (needs Docker)
   the dedup path deliberately.
 - Percentiles come from per-operation timings collected in-test
   (`p50-ms`/`p95-ms`/`p99-ms` metrics), not from `ns/op` averages.
+- The 100-sample quick runs support p50 well; p95/p99 at n=100 sit near
+  the sample extreme and are not stable tail estimates. Treat them as
+  order-of-magnitude only. The precision runs below (n=1000, three
+  independent runs) are the basis for any tail claim, and even those
+  stay local-container evidence, never SLOs.
 
 ## Store: put path (100 ops, unique payloads)
 
@@ -51,10 +56,66 @@ make bench-integration     # full stack: tiers, handlers, jobs (needs Docker)
 
 | Benchmark | Size | avg | p50 | p95 | p99 | allocs/op |
 |---|---|---|---|---|---|---|
-| GetInline | 100 B | 0.05–0.42 ms | 0.05–0.33 ms | — | — | 2.0 KB / 38 |
+| GetInline, run A (n=100) | 100 B | 0.048 ms | 0.048 ms | 0.052 ms | 0.059 ms | 2.0 KB / 38 |
+| GetInline, run B (n=100) | 100 B | 0.15 ms | 0.13 ms | 0.22 ms | 0.32 ms | 2.0 KB / 38 |
+
+Run A vs run B on the same host show ~7× p50 movement with no code change —
+shared-runner noise dominates sub-millisecond measurements. The precision
+runs below narrow it, but no single run supports a tail claim alone.
 | GetParquet | 5 KiB | ~20 ms | 22 ms | 26 ms | 27 ms | 352 KB / 2697 |
 | GetS3 | 300 KiB | ~6.8 ms | 6.7 ms | 9.2 ms | 9.6 ms | 1.6 MB / 464 |
 | GetMissing | — | ~0.06 ms | 0.06 ms | 0.09 ms | 0.16 ms | 1.1 KB / 24 |
+
+## Precision runs (n=1000, three independent runs)
+
+Same benches, `-benchtime=1000x`, three separate processes. Use these
+ranges — not any single run — when reasoning about tails.
+
+| Benchmark | Run 1 p50 / p95 / p99 | Run 2 p50 / p95 / p99 | Run 3 p50 / p95 / p99 |
+|---|---|---|---|
+| PutInline | 0.87 / 2.32 / 4.01 ms | 0.39 / 1.40 / 2.55 ms | 0.72 / 3.08 / 3.96 ms |
+| PutParquet | 8.52 / 12.15 / 15.38 ms | 7.48 / 11.49 / 14.69 ms | 7.23 / 11.79 / 14.50 ms |
+| PutS3 | 12.76 / 15.30 / 19.34 ms | 12.83 / 15.42 / 18.82 ms | 13.13 / 15.71 / 19.25 ms |
+| PutDedupHit | 0.73 / 1.23 / 1.77 ms | 0.20 / 0.43 / 0.63 ms | 0.17 / 0.85 / 1.95 ms |
+| GetInline | 0.21 / 0.32 / 0.50 ms | 0.054 / 0.18 / 0.22 ms | 0.073 / 0.16 / 0.23 ms |
+| GetParquet | 20.2 / 25.0 / 29.1 ms | 19.5 / 24.7 / 29.1 ms | 19.0 / 24.4 / 28.8 ms |
+| GetS3 | 3.08 / 8.42 / 9.53 ms | 6.45 / 8.95 / 10.70 ms | 6.68 / 9.19 / 10.45 ms |
+
+Read across rows, not down columns: object-tier puts and parquet gets
+are stable within ±15% run to run; sub-millisecond operations swing
+2–4× (dedup p50 0.73 → 0.17 ms; one GetS3 run caught a slow p50 at
+half the usual). p99 at n=1000 is the 10th-slowest sample — usable
+signal, still local-container evidence.
+
+## Tier boundary cliff (default thresholds, n=20 per size)
+
+Same operation on both sides of the 4 KiB inline boundary:
+
+| Size | Tier | Put p50 | Get p50 |
+|---|---|---|---|
+| 4095 B | inline | 1.68 ms | 0.25 ms |
+| 4096 B | parquet | 10.58 ms | 23.18 ms |
+| 4097 B | parquet | 10.26 ms | 22.25 ms |
+| 8192 B | parquet | 10.30 ms | 22.62 ms |
+
+One byte flips the tier: put ×6, get ×90. The cliff is razor-sharp
+because routing is a pure size comparison — there is no gradual
+transition, by design.
+
+## Same payload across all tiers (300 KiB, threshold overrides, n=20)
+
+Isolates tier cost from size — the comparison the per-size tables cannot make:
+
+| Forced tier | Put p50 | Get p50 |
+|---|---|---|
+| inline | 2.5 ms | 0.56 ms |
+| parquet | 16.6 ms | 34.4 ms |
+| s3 (default routing) | 13.2 ms | 8.1 ms |
+
+At fixed size, parquet costs the most on both paths: file encode plus
+ranged footer/row fetches outweigh one object write and one object read.
+The tier earns its keep only where object count (not latency) dominates —
+that tradeoff needs production size distributions, not these tables.
 
 ## Handler roundtrips (1 KiB payload, put + get)
 
@@ -132,6 +193,31 @@ rather than caching it — the test does exactly this.
 **Write amplification to watch:** parquet puts allocate ~3.3 MB per 5 KiB payload (writer buffering); S3 puts ~2.3× payload bytes. At high put concurrency this pressures GC — profile before raising throughput targets.
 
 **Sweep rates bound operations, not correctness:** integrity at ~80 artifacts/sec means a million-artifact estate needs ~3.5 h per full pass — sharding (`SHARD_INDEX`/`COUNT`) and sampling (`SAMPLE_RATE`) exist for exactly this; verify coverage math per tenant size in runbooks.
+
+## Integrity coverage math (deterministic vs probabilistic)
+
+The "100% within 30 days" SLO starter below is precise only under a
+deterministic schedule. Two modes, different guarantees:
+
+**Deterministic full coverage.** Sweep at sample rate 1.0, sharded across
+S shards (`SHARD_INDEX`/`COUNT`), each shard swept at least once per
+D days. Every artifact is then verified every D days, guaranteed. The
+30-day target holds iff D ≤ 30 — e.g. 30 daily shards, or fewer shards
+with faster cadence. Cost scales with estate size: at the measured
+~80 artifacts/sec, one shard needs ~3.5 h per million artifacts, so size
+the shard count from the tenant census, not from hope.
+
+**Sampled detection (probabilistic).** At sample rate r < 1 per pass, a
+corrupt artifact escapes one pass with probability (1−r); after k passes
+the miss probability is (1−r)^k. For 99.9% detection within 30 daily
+passes, (1−r)^30 ≤ 0.001, i.e. r ≥ 0.21 per pass — far above the default
+0.01, under which a given corrupt artifact still has a ~26% chance of
+going unnoticed for the whole month (0.99^30 ≈ 0.74 detection). Sampling
+controls cost; it must never be presented as coverage.
+
+Keep the two measurements separate: full-sweep throughput
+(artifacts/sec, above) sizes the deterministic schedule; sampled runs
+measure detection probability, not coverage.
 
 ## SLO starter (proposed, not promised)
 
