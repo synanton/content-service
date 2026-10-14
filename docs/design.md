@@ -1,6 +1,6 @@
 # Content Service — Design Document
 
-**Status:** In implementation (Phase 5); contract + Core/Extended conformance live\
+**Status:** In implementation (Phase 5); contract + Core conformance live; Extended defined in `docs/conformance.md`, suite not yet implemented\
 **Implements:** Synanton Design 1.26 (Content Cache Plane)\
 **Language:** Go 1.22+\
 **Date:** 2026-10-13
