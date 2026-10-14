@@ -30,6 +30,12 @@ lint:
 bench:
 	$(GO) test -run=NONE -bench=. -benchmem ./pkg/digest/... ./pkg/reference/...
 
+# Integration benchmarks against real Postgres + MinIO. Bounded iteration
+# counts; record results in docs/benchmarks.md with hardware provenance.
+# Never gate PRs on absolute numbers — shared runners are too noisy.
+bench-integration:
+	$(GO) test -run=NONE -tags=integration -bench=. -benchmem -benchtime=100x ./test/integration/...
+
 tools:
 	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 

@@ -22,17 +22,17 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 | Area | Implemented | Unit/integration tested | Conformance-validated | Benchmark-validated |
 |---|---|---|---|---|
-| Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core+Extended suite) | ⬜ |
-| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core+Extended suite) | ⬜ |
-| HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ⬜ |
-| gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ⬜ |
+| Domain core (artifacts, retention, references) | ✅ | ✅ | ✅ (Core+Extended suite) | ✅ (micro-benches) |
+| Postgres adapter (put/get, dedup, tenant isolation) | ✅ | ✅ (testcontainers) | ✅ (Core+Extended suite) | ✅ (tier benches) |
+| HTTP surface (artifacts, capabilities, healthz/readyz) | ✅ | ✅ (contract tests) | ⬜ | ✅ (roundtrip bench) |
+| gRPC surface (put/get/head/capabilities) | ✅ | ✅ (bufconn) | ⬜ | ✅ (roundtrip bench) |
 | Reference registry (register/release) | ✅ | ✅ | ✅ (Core suite) | ⬜ |
 | Legal hold + audit trail | ✅ | ✅ | ✅ (Core suite) | ⬜ |
-| S3/MinIO backing for object tiers | ✅ | ✅ (testcontainers minio) | ⬜ | ⬜ |
-| Background jobs (disposition, integrity, orphan sweeper) | ✅ | ✅ (testcontainers) | ⬜ | ⬜ |
-| Parquet compaction (merge small files) | ✅ | ✅ (testcontainers) | ⬜ | ⬜ |
+| S3/MinIO backing for object tiers | ✅ | ✅ (testcontainers minio) | ⬜ | ✅ (tier benches) |
+| Background jobs (disposition, integrity, orphan sweeper) | ✅ | ✅ (testcontainers) | ⬜ | ✅ (sweep benches) |
+| Parquet compaction (merge small files) | ✅ | ✅ (testcontainers) | ⬜ | ✅ (merge bench) |
 
-`⬜` = not yet; nothing in this table is claimed before its evidence exists.
+`⬜` = not yet; nothing in this table is claimed before its evidence exists. Benchmark evidence lives in [`docs/benchmarks.md`](docs/benchmarks.md) with environment provenance.
 
 Explicitly out of scope for v0.2.0: open-batch Parquet appends (writes are single-row files; merging is implemented), multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
 

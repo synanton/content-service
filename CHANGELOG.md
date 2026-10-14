@@ -17,6 +17,9 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
 - Design 1.26 conformance suite extended to 14 checks (tier recording,
   release-vs-retention separation, head consistency, register idempotency)
   and run against the fake (unit) and Postgres + MinIO (integration).
+- Benchmarks: tier put/get/dedup percentiles, HTTP/gRPC roundtrips,
+  compactor/disposition/integrity sweeps (`make bench-integration`),
+  recorded with provenance in `docs/benchmarks.md`.
 - mdBook developer documentation (`docs/book.toml`, `docs/SUMMARY.md`,
   `docs/index.md`) published to GitHub Pages by `.github/workflows/docs.yml`
   on every merge touching `docs/`.

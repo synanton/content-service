@@ -112,6 +112,27 @@ test-integration:
 
 Both `ryuk:0.8.1` (v0.33.0 default) and `ryuk:0.12.0` (override) are cached locally; the override matches equalix-go and avoids reaper-image pull surprises.
 
+## Benchmark methodology (observed 2026-10-14, keep in mind when reading logs)
+
+- In this toolchain, `go test -bench` with count-form `-benchtime=Nx`
+  executes each benchmark **twice**: an N=1 warmup run followed by the
+  N=N measured run (verified: single-benchmark runs show one `ops=`
+  line at N=1x and two at N=2x; summaries reflect the measured run).
+  Do not mistake warmup output for duplicate execution bugs.
+- All benchmarks in one process share one database. Sweep benchmarks
+  (compactor, disposition, integrity) therefore also process rows seeded
+  by earlier benchmarks — realistic steady-state load, but account for
+  it when attributing per-tenant merge counts in logs.
+- Give every benchmark its own tenant (atomic counter) and every put
+  operation unique bytes (salted), except the dedicated dedup benchmark.
+  Global sweeps then stay correct by construction.
+- Report percentiles from per-operation timings (`p50-ms`/`p95-ms`/
+  `p99-ms` via `ReportMetric`), not from `ns/op` averages — especially
+  for sweeps, where one invocation covers the whole table.
+- Never gate PRs on absolute benchmark numbers; shared runners are too
+  noisy (inline-get p50 measured 48µs and 330µs on the same host).
+  Record results with hardware provenance in `docs/benchmarks.md`.
+
 ## Cross-repo note (platform/Java)
 
 The same suite shape applies to `java:content-cache-postgres` (`PostgresTestBase`: one `postgres:16-alpine` container per JVM, `ensureSchema`, least-privilege `app` role, visible-skip). Two Java-side findings worth reusing:
