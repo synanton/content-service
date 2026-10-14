@@ -6,6 +6,7 @@
 
 - [HTTP and gRPC API](api.md)
 - [Runbook](runbook.md)
+- [Benchmarks](benchmarks.md)
 
 # Architecture
 
