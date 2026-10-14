@@ -28,12 +28,13 @@ import (
 )
 
 var (
-	ctx   = context.Background()
-	pool  *pgxpool.Pool
-	store *adapterpg.Store
-	blobs port.BlobStore
-	rows  *parquet.Reader
-	cfg   *config.Config
+	ctx            = context.Background()
+	pool           *pgxpool.Pool
+	store          *adapterpg.Store
+	blobs          port.BlobStore
+	rows           *parquet.Reader
+	cfg            *config.Config
+	minioContainer testcontainers.Container
 )
 
 func TestMain(m *testing.M) {
@@ -73,6 +74,7 @@ func startMinio(ctx context.Context) (*s3adapter.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("start minio: %w", err)
 	}
+	minioContainer = container
 	host, err := container.Host(ctx)
 	if err != nil {
 		return nil, err

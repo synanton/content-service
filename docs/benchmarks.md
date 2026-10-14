@@ -126,6 +126,47 @@ that tradeoff needs production size distributions, not these tables.
 
 These measure handler + store cost only; add network RTT for deployed estimates.
 
+## Workload scenarios (seeded, reproducible)
+
+`test/integration/workload.go` generates deterministic mixed traffic
+(size bands 100 B / 5 KiB / 300 KiB / 1 MiB at 50/30/15/5 weights,
+4 tenants, 10% dedup replays, 50% reads). Workload identity is
+`workload-v1/seed/tenants/dedup/read` — same identity replays the same
+distributions (op order is deterministic only at parallelism 1).
+
+| Scenario | Result |
+|---|---|
+| Mixed workload, 1 worker (n=100) | p50 3.07 ms, p95 13.43 ms, p99 23.49 ms |
+| Sustained churn, 30 s (6230 ops, 12 inline sweeps) | 0 errors; p50 1.23 ms, p95 21.9 ms, p99 24.5 ms |
+
+## Throughput vs concurrency (400 mixed ops, closed-loop)
+
+| Workers | Throughput, run A | Throughput, run B |
+|---|---|---|
+| 1 | 134 ops/sec | 179 ops/sec |
+| 4 | 774 ops/sec | 944 ops/sec |
+| 16 | 2649 ops/sec | 4689 ops/sec |
+| 64 | 3131 ops/sec | 6176 ops/sec |
+
+Near-linear to 4 workers, ~5× at 16, saturating past it while p99
+degrades (17 ms at 16 workers → ~49 ms at 64 in warmup runs). The
+likely ceiling is the Postgres pool (20 connections, 64 workers
+contending). Per-op percentiles stay usable throughout — saturation
+shows up first in throughput flattening, not in error rate (0 errors
+at every level).
+
+## Failure injection
+
+| Scenario | Result |
+|---|---|
+| MinIO killed mid-test | writes and object-tier reads fail immediately with errors; inline traffic unaffected |
+| MinIO restarted | fresh client on the re-resolved endpoint reads pre-outage bytes back intact within seconds |
+| 2 s degraded object store | reads still succeed with intact bytes (no server-side deadline today — tracked as follow-up) |
+
+Note for operators: Docker reallocates auto-assigned host ports across
+stop/start, so any reconnecting client must re-resolve the endpoint
+rather than caching it — the test does exactly this.
+
 ## Jobs
 
 | Benchmark | Result |
@@ -194,7 +235,8 @@ Local-container observations only — adopt as SLOs after staging measurements:
 ## What remains
 
 - Production payload-size distribution (p50/p95/p99 per intent type over 30 days, per proposal Phase 6) to finalize thresholds.
-- Sustained-throughput load test (parallel clients, multi-MiB payloads, vegeta/k6 scale) — current numbers are latency-at-low-concurrency only.
-- Multi-tenant-concurrency throughput and noisy-neighbor characterization.
+- Open-loop arrival patterns (k6 scale) and multi-MiB payloads — current numbers are closed-loop only.
+- Sustained multi-hour soaks (`CONTENT_BENCH_SOAK_SECONDS` raises the churn benchmark window; default 30 s).
+- Server-side deadlines for slow (not dead) object storage.
 - Nightly CI trend tracking (results committed per run; regressions as trends, not anecdotes).
 - Grafana dashboards over the existing Prometheus metrics.

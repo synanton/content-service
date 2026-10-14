@@ -20,11 +20,10 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
 - Benchmarks: tier put/get/dedup percentiles, HTTP/gRPC roundtrips,
   compactor/disposition/integrity sweeps (`make bench-integration`),
   recorded with provenance in `docs/benchmarks.md`.
-- Benchmark precision: n=1000 runs across three processes for put/get
-  tiers with run-to-run variability, same-payload cross-tier comparison,
-  4 KiB boundary cliff measurement, deterministic-vs-probabilistic
-  integrity coverage math (`make bench-integration BENCHTIME=1000x`).
-- MinIO test image pinned by digest for reproducible benchmark history.
+- Workload scenarios (`test/integration/workload.go` + `scenario_test.go`):
+  seeded mixed-size traffic, throughput vs concurrency (1–64 workers),
+  sustained churn with retention lifecycle, MinIO kill/recovery and
+  slow-store failure injection.
 - mdBook developer documentation (`docs/book.toml`, `docs/SUMMARY.md`,
   `docs/index.md`) published to GitHub Pages by `.github/workflows/docs.yml`
   on every merge touching `docs/`.

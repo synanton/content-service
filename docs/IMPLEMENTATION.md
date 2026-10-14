@@ -131,7 +131,7 @@ This test exercises: digest computation, tier routing, dedup by `(tenant_id, dig
 
 ## What to Do Today
 
-1. Run `make test-integration` and confirm all 49 tests green.
+1. Run `make test-integration` and confirm all 51 tests green.
 2. Run `make docker-up` and `curl localhost:8080/readyz`, plus a grpcurl `Put` against `:50051`.
 3. Run `make bench-integration` and record results in `docs/benchmarks.md` with hardware provenance.
 4. Pick an open Phase 5 item above (dashboards, structured logging, runbook incident exercises).
