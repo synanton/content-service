@@ -262,6 +262,12 @@ func (s *Store) Get(ctx context.Context, tenantID, artifactID string) ([]byte, *
 			return nil, nil, fmt.Errorf("fetch object tier: %w", err)
 		}
 	}
+	// Unconditional recompute: every byte-serving read verifies, all
+	// tiers, no fast-path bypass. CB-x's coverage claim ("every Get")
+	// is universal only while this stays unconditional — a cache hit
+	// or tier that skips it silently narrows the guarantee to the
+	// tested path. Keep it unconditional or update the CB-x tests and
+	// the runbook guarantee together.
 	if subtle.ConstantTimeCompare([]byte(digest.Compute(payload)), []byte(art.Digest)) != 1 {
 		return nil, nil, domain.ErrIntegrityMismatch
 	}
