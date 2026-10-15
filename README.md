@@ -225,6 +225,11 @@ curl -X POST http://localhost:8080/api/v1/artifacts \
 | `CONTENT_GRPC_PORT` | `50051` | gRPC listen port |
 | `CONTENT_S3_ENDPOINT` / `CONTENT_S3_BUCKET` / `CONTENT_S3_REGION` | `http://localhost:9000` / `synanton-content` / `us-east-1` | Object storage location |
 | `CONTENT_S3_ACCESS_KEY` / `CONTENT_S3_SECRET_KEY` | `minioadmin` / `minioadmin` | Object storage credentials (dev defaults) |
+| `CONTENT_S3_OP_TIMEOUT` | `30s` | Deadline per object op (put/get/stat/delete/range), retries included |
+| `CONTENT_S3_LIST_TIMEOUT` | `2m` | Deadline for reconciliation scans |
+| `CONTENT_S3_MAX_ATTEMPTS` | `3` | Total tries per op (1 initial + retries); 5xx/network only |
+| `CONTENT_S3_RETRY_BASE_DELAY` | `200ms` | First backoff, doubling per try |
+| `CONTENT_S3_BREAKER_THRESHOLD` / `CONTENT_S3_BREAKER_COOLDOWN` | `5` / `30s` | Consecutive failures to open; fast-fail window |
 | `CONTENT_PARQUET_TARGET_ROWS` / `CONTENT_PARQUET_MAX_FILES` | `1000` / `32` | Compaction merge threshold and per-run file cap |
 | `CONTENT_JOBS_DISPOSITION_INTERVAL` / `CONTENT_JOBS_INTEGRITY_INTERVAL` / `CONTENT_JOBS_ORPHAN_INTERVAL` / `CONTENT_JOBS_COMPACTOR_INTERVAL` | `1h` / `24h` / `1h` / `6h` | Sweep cadences |
 | `CONTENT_JOBS_BATCH_SIZE` | `1000` | Row cap per sweep query |
