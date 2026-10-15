@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -17,7 +18,8 @@ func main() {
 
 	env, err := jobsboot.Setup(ctx)
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		slog.Error("setup failed", "err", err)
+		os.Exit(1)
 	}
 	defer env.Pool.Close()
 
@@ -37,9 +39,9 @@ func main() {
 			if err != nil {
 				return err
 			}
-			log.Printf("integrity: checked=%d failed=%d", result.Checked, result.Failed)
+			slog.Info("integrity sweep result", "checked", result.Checked, "failed", result.Failed)
 			return nil
 		}}
 	runner.Loop(ctx)
-	log.Printf("integrity-job stopped")
+	slog.Info("integrity-job stopped")
 }

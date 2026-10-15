@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -17,7 +18,8 @@ func main() {
 
 	env, err := jobsboot.Setup(ctx)
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		slog.Error("setup failed", "err", err)
+		os.Exit(1)
 	}
 	defer env.Pool.Close()
 
@@ -33,5 +35,5 @@ func main() {
 	runner := jobs.Runner{Name: "parquet-compactor", Interval: env.Config.Jobs.CompactorInterval,
 		Run: sweep.Sweep}
 	runner.Loop(ctx)
-	log.Printf("parquet-compactor stopped")
+	slog.Info("parquet-compactor stopped")
 }

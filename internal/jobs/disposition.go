@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/synanton/content-service/internal/observability"
@@ -55,8 +56,8 @@ func (d *Disposition) Sweep(ctx context.Context) error {
 		}
 		if key != "" {
 			if err := d.Blobs.Delete(ctx, key); err != nil {
-				logf("disposition: blob cleanup %s/%s failed (orphan sweeper heals): %v",
-					c.TenantID, c.ArtifactID, err)
+				slog.Warn("disposition blob cleanup failed (orphan sweeper heals)",
+					"tenant", c.TenantID, "artifact", c.ArtifactID, "err", err)
 			}
 		}
 	}

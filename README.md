@@ -256,7 +256,7 @@ curl -X POST http://localhost:8080/api/v1/artifacts \
 
 ### Logging
 
-Standard-library `log` today. Set container log level via the platform's log driver; structured JSON logging is still future (metrics are live).
+Structured JSON logs via `log/slog` (stdout, level from `CONTENT_LOG_LEVEL`). Audit events carry `event=audit` for single-field extraction; raw payloads, tokens, and credentials are never logged (pinned by redaction tests).
 
 ---
 
@@ -320,7 +320,7 @@ See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the phased plan and t
 - Phase 2 — Commitix adapter design (Java `ContentStore` port; landed in platform/commitix repos)
 - Phase 3 — Optional large-payload adapter (envelope approach needs no migration; clients exist)
 - Phase 4 — Vertical slice (event envelope carries the reference; open)
-- Phase 5 — Extended lifecycle: background jobs (done), Parquet compaction (done), observability metrics (done); dashboards, structured logging, runbook exercises (open)
+- Phase 5 — Extended lifecycle: background jobs (done), Parquet compaction (done), observability metrics (done); dashboards, runbook exercises (open)
 - Phase 6 — Adoption decision (open)
 
 ---

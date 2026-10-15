@@ -120,4 +120,4 @@ Files: `migrations/000001_create_artifacts.{up,down}.sql` through `000005_parque
 
 ## 9. Observability
 
-Structured logs via the standard library `log` package today. `/metrics` serves Prometheus counters, histograms, and gauges (put/get latency and errors by tenant and tier, integrity failures, disposition/orphan/parquet-compaction signals). Cardinality note: `tenant_id` labels are unbounded by construction — cap tenants per deployment or front the endpoint accordingly.
+Structured JSON logs via `log/slog` to stdout (level from `CONTENT_LOG_LEVEL`); audit events carry `event=audit`. `/metrics` serves Prometheus counters, histograms, and gauges (put/get latency and errors by tenant and tier, integrity failures, disposition/orphan/parquet-compaction signals). Cardinality note: `tenant_id` labels are unbounded by construction — cap tenants per deployment or front the endpoint accordingly.

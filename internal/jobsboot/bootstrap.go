@@ -13,6 +13,7 @@ import (
 	"github.com/synanton/content-service/internal/adapter/parquet"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
+	"github.com/synanton/content-service/internal/logging"
 	"github.com/synanton/content-service/internal/port"
 )
 
@@ -31,6 +32,9 @@ func Setup(ctx context.Context) (*Env, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	// Process-wide JSON logging is configured here so every job binary
+	// shares one stream and level without repeating the wiring.
+	logging.SetupDefault(cfg.Observability.LogLevel)
 	pool, err := pgxpool.New(ctx, cfg.DB.URL)
 	if err != nil {
 		return nil, fmt.Errorf("db connect: %w", err)

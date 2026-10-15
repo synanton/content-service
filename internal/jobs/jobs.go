@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -78,21 +78,21 @@ type Runner struct {
 
 // Loop blocks until ctx is done.
 func (r Runner) Loop(ctx context.Context) {
-	log.Printf("job %s: starting (interval %v)", r.Name, r.Interval)
+	slog.Info("job starting", "job", r.Name, "interval", r.Interval)
 	if err := r.runOnce(ctx); err != nil && ctx.Err() == nil {
-		log.Printf("job %s: initial run failed: %v", r.Name, err)
+		slog.Error("job initial run failed", "job", r.Name, "err", err)
 	}
 	ticker := time.NewTicker(r.Interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("job %s: stopping", r.Name)
+			slog.Info("job stopping", "job", r.Name)
 			return
 		case at := <-ticker.C:
 			_ = at
 			if err := r.runOnce(ctx); err != nil && ctx.Err() == nil {
-				log.Printf("job %s: run failed: %v", r.Name, err)
+				slog.Error("job run failed", "job", r.Name, "err", err)
 			}
 		}
 	}
@@ -101,7 +101,7 @@ func (r Runner) Loop(ctx context.Context) {
 func (r Runner) runOnce(ctx context.Context) error {
 	start := time.Now()
 	err := r.Run(ctx)
-	log.Printf("job %s: sweep finished in %v (err=%v)", r.Name, time.Since(start), err)
+	slog.Info("job sweep finished", "job", r.Name, "elapsed", time.Since(start), "err", err)
 	return err
 }
 
@@ -135,7 +135,7 @@ func AcquireLeadership(ctx context.Context, pool *pgxpool.Pool, key int64) (*Lea
 // Release unlocks and returns the connection to the pool.
 func (l *Leadership) Release(ctx context.Context) {
 	if _, err := l.conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, l.key); err != nil {
-		log.Printf("leadership: unlock failed: %v", err)
+		slog.Warn("leadership unlock failed", "err", err)
 	}
 	l.conn.Release()
 }
@@ -149,10 +149,6 @@ func InShard(tenant string, index, count int) bool {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(tenant))
 	return int(h.Sum32()%uint32(count)) == index%count
-}
-
-func logf(format string, args ...interface{}) {
-	log.Printf(format, args...)
 }
 
 // Advisory-lock keys make single-leader jobs mutually exclusive across
