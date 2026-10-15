@@ -8,6 +8,7 @@ import (
 
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 )
 
 // Disposition physically deletes expired artifacts whose references are all
@@ -18,10 +19,11 @@ import (
 // reverse order would leave a row pointing at missing bytes, which needs an
 // operator. Blob cleanup failures are logged, never fatal to the sweep.
 type Disposition struct {
-	Store LifecycleStore
-	Blobs port.BlobStore
-	Grace time.Duration
-	Batch int
+	Store   LifecycleStore
+	Blobs   port.BlobStore
+	Grace   time.Duration
+	Batch   int
+	Auditor *security.Auditor
 }
 
 func (d *Disposition) Sweep(ctx context.Context) error {
@@ -56,6 +58,7 @@ func (d *Disposition) Sweep(ctx context.Context) error {
 		}
 		if key != "" {
 			if err := d.Blobs.Delete(ctx, key); err != nil {
+				AuditUpstream(ctx, d.Auditor, "disposition_failed", c.TenantID, c.ArtifactID, err)
 				slog.Warn("disposition blob cleanup failed (orphan sweeper heals)",
 					"tenant", c.TenantID, "artifact", c.ArtifactID, "err", err)
 			}

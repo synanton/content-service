@@ -48,7 +48,7 @@ func testClient(t *testing.T) contentv1.ContentServiceClient {
 	v := &middleware.HMACVerifier{Key: testKey, ExpectedIssuer: "synanton-security-provider"}
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(middleware.UnaryServerInterceptor(v)))
-	contentv1.RegisterContentServiceServer(srv, NewServer(conformance.NewFakeStore()))
+	contentv1.RegisterContentServiceServer(srv, NewServer(conformance.NewFakeStore(), nil))
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",

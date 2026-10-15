@@ -9,6 +9,7 @@ import (
 
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 )
 
 // Sweeper reconciles metadata against object storage in both directions.
@@ -28,6 +29,7 @@ type Sweeper struct {
 	Grace   time.Duration
 	Batch   int
 	DryRun  bool
+	Auditor *security.Auditor
 }
 
 func (s *Sweeper) Sweep(ctx context.Context) error {
@@ -50,6 +52,7 @@ func (s *Sweeper) sweepMissingBlobs(ctx context.Context) error {
 	for _, a := range externals {
 		ok, err := s.Blobs.Exists(ctx, blobObjectKey(a.TenantID, a.Digest))
 		if err != nil {
+			AuditUpstream(ctx, s.Auditor, "sweep_failed", a.TenantID, a.ArtifactID, err)
 			return fmt.Errorf("sweeper: exists %s/%s: %w", a.TenantID, a.ArtifactID, err)
 		}
 		if !ok {
@@ -71,6 +74,9 @@ func (s *Sweeper) sweepMissingBlobs(ctx context.Context) error {
 func (s *Sweeper) sweepOrphanBlobs(ctx context.Context, lister port.BlobLister) error {
 	objects, err := lister.List(ctx, "")
 	if err != nil {
+		// Scan-level failure: no tenant context, still audited so the
+		// outage leaves an artifact-independent record.
+		AuditUpstream(ctx, s.Auditor, "sweep_failed", "", "", err)
 		return fmt.Errorf("sweeper: list objects: %w", err)
 	}
 	cutoff := time.Now().UTC().Add(-s.Grace)
@@ -93,6 +99,7 @@ func (s *Sweeper) sweepOrphanBlobs(ctx context.Context, lister port.BlobLister) 
 			continue
 		}
 		if err := s.Blobs.Delete(ctx, obj.Key); err != nil {
+			AuditUpstream(ctx, s.Auditor, "sweep_failed", tenant, obj.Key, err)
 			return fmt.Errorf("sweeper: delete orphan %s: %w", obj.Key, err)
 		}
 		observability.OrphanDeleted.WithLabelValues(tenant).Inc()

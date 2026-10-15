@@ -50,7 +50,7 @@ func mintToken(t *testing.T, tenant string, exp time.Time) string {
 
 func authedHandler() (http.Handler, *middleware.HMACVerifier) {
 	v := &middleware.HMACVerifier{Key: testKey, ExpectedIssuer: "synanton-security-provider"}
-	h := NewHandler(conformance.NewFakeStore())
+	h := NewHandler(conformance.NewFakeStore(), nil)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/artifacts", middleware.RequireAuth(v)(http.HandlerFunc(h.Put)))
 	mux.Handle("GET /api/v1/artifacts/", middleware.RequireAuth(v)(http.HandlerFunc(h.Get)))

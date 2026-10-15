@@ -18,11 +18,30 @@ import (
 )
 
 type Handler struct {
-	store port.ContentStore
+	store   port.ContentStore
+	auditor *security.Auditor
 }
 
-func NewHandler(store port.ContentStore) *Handler {
-	return &Handler{store: store}
+func NewHandler(store port.ContentStore, auditor *security.Auditor) *Handler {
+	return &Handler{store: store, auditor: auditor}
+}
+
+// auditUpstream records an artifact-attributed audit event for an
+// upstream-availability failure (timeout or open breaker). Nil auditor
+// disables emission (benchmarks, tests that assert transport only).
+// Exactly one record per failed operation: callers invoke it once, on
+// the failing path, before mapping the status.
+func (h *Handler) auditUpstream(ctx context.Context, action, tenantID, artifactID, reason string) {
+	if h.auditor == nil {
+		return
+	}
+	h.auditor.Record(ctx, security.AuditEvent{
+		Actor:      "system",
+		Action:     action,
+		TenantID:   tenantID,
+		ArtifactID: artifactID,
+		Reason:     reason,
+	})
 }
 
 type putRequest struct {
@@ -131,6 +150,11 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 			return
 		}
+		if reason, ok := s3adapter.AuditReason(err); ok {
+			h.auditUpstream(r.Context(), "put_failed", tenantID, "", reason)
+			writeError(w, http.StatusServiceUnavailable, reason, "storage backend unavailable")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "put failed")
 		return
 	}
@@ -164,7 +188,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	data, art, err := h.store.Get(r.Context(), tenantID, id)
 	if err != nil {
 		observability.GetErrors.WithLabelValues(tenantID).Inc()
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, tenantID, id, "get_failed", err)
 		return
 	}
 	observability.GetLatency.WithLabelValues(tenantID, art.StorageTier).Observe(time.Since(start).Seconds())
@@ -193,7 +217,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 	}
 	ok, err := h.store.Exists(r.Context(), tenantID, id)
 	if err != nil {
-		h.writeStoreError(w, err)
+		h.writeStoreError(w, r, tenantID, id, "head_failed", err)
 		return
 	}
 	if !ok {
@@ -204,12 +228,15 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) writeStoreError(w http.ResponseWriter, err error) {
+func (h *Handler) writeStoreError(w http.ResponseWriter, r *http.Request, tenantID, artifactID, action string, err error) {
+	if reason, ok := s3adapter.AuditReason(err); ok {
+		h.auditUpstream(r.Context(), action, tenantID, artifactID, reason)
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		writeError(w, http.StatusServiceUnavailable, "UPSTREAM_TIMEOUT", "storage backend timed out")
+		writeError(w, http.StatusServiceUnavailable, s3adapter.ReasonTimeout, "storage backend timed out")
 	case isCircuitOpen(err):
-		writeError(w, http.StatusServiceUnavailable, "UPSTREAM_DEGRADED", "storage backend degraded")
+		writeError(w, http.StatusServiceUnavailable, s3adapter.ReasonDegraded, "storage backend degraded")
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "artifact not found")
 	case errors.Is(err, domain.ErrIntegrityMismatch):
