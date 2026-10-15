@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -17,7 +18,8 @@ func main() {
 
 	env, err := jobsboot.Setup(ctx)
 	if err != nil {
-		log.Fatalf("setup: %v", err)
+		slog.Error("setup failed", "err", err)
+		os.Exit(1)
 	}
 	defer env.Pool.Close()
 
@@ -36,12 +38,12 @@ func main() {
 				return err
 			}
 			if !ok {
-				log.Printf("disposition: peer leads, skipping tick")
+				slog.Info("peer leads, skipping tick", "job", "disposition")
 				return nil
 			}
 			defer lead.Release(ctx)
 			return sweep.Sweep(ctx)
 		}}
 	runner.Loop(ctx)
-	log.Printf("disposition-job stopped")
+	slog.Info("disposition-job stopped")
 }

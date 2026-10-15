@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -83,12 +84,12 @@ func (s *Sweeper) sweepOrphanBlobs(ctx context.Context, lister port.BlobLister) 
 			continue
 		}
 		if tenant == "" {
-			logf("sweeper: skipping foreign key shape %q", obj.Key)
+			slog.Info("sweeper skipping foreign key shape", "key", obj.Key)
 			continue
 		}
 		counts[tenant]++
 		if s.DryRun {
-			logf("sweeper: dry-run would delete orphan %s (modified %v)", obj.Key, obj.ModifiedAt)
+			slog.Info("sweeper dry-run would delete orphan", "key", obj.Key, "modified", obj.ModifiedAt)
 			continue
 		}
 		if err := s.Blobs.Delete(ctx, obj.Key); err != nil {

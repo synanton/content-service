@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -24,6 +24,7 @@ import (
 	grpchandler "github.com/synanton/content-service/internal/adapter/grpc"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
+	"github.com/synanton/content-service/internal/logging"
 	"github.com/synanton/content-service/internal/port"
 	"github.com/synanton/content-service/internal/security"
 	"github.com/synanton/security-provider/pkg/middleware"
@@ -31,36 +32,46 @@ import (
 
 var version = "dev"
 
+// fatal logs and exits 1. It replaces log.Fatalf now that output is
+// structured: slog has no fatal level, and the exit must be explicit.
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		// No config, no level: report on stderr and exit.
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
 	}
+	logging.SetupDefault(cfg.Observability.LogLevel)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	pool, err := pgxpool.New(ctx, cfg.DB.URL)
 	if err != nil {
-		log.Fatalf("db connect: %v", err)
+		fatal("db connect failed", "err", err)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		log.Fatalf("db ping: %v", err)
+		fatal("db ping failed", "err", err)
 	}
 
 	if cfg.Server.MigrateOnStartup {
-		log.Printf("applying migrations from %s", cfg.Server.MigrationsDir)
+		slog.Info("applying migrations", "dir", cfg.Server.MigrationsDir)
 		if err := postgres.Migrate(ctx, pool, cfg.Server.MigrationsDir); err != nil {
-			log.Fatalf("migrate: %v", err)
+			fatal("migrate failed", "err", err)
 		}
-		log.Printf("migrations applied")
+		slog.Info("migrations applied")
 	}
 
 	blobs, rows, err := dialObjectStore(ctx, cfg)
 	if err != nil {
-		log.Fatalf("object storage: %v", err)
+		fatal("object storage failed", "err", err)
 	}
 
 	store := postgres.NewStore(pool, cfg, blobs, rows)
@@ -69,7 +80,7 @@ func main() {
 
 	verifier, err := security.NewVerifier(cfg.Security.Auth)
 	if err != nil {
-		log.Fatalf("auth: %v", err)
+		fatal("auth setup failed", "err", err)
 	}
 	requireAuth := func(next http.Handler) http.Handler {
 		if verifier == nil {
@@ -109,14 +120,14 @@ func main() {
 
 	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.GrpcPort))
 	if err != nil {
-		log.Fatalf("grpc listen: %v", err)
+		fatal("grpc listen failed", "err", err)
 	}
 	grpcOpts := []grpc.ServerOption{}
 	if verifier != nil {
 		grpcOpts = append(grpcOpts, grpc.ChainUnaryInterceptor(middleware.UnaryServerInterceptor(verifier)))
-		log.Printf("authentication enabled: contexts validated, tenant derived from context")
+		slog.Info("authentication enabled", "mode", "contexts validated, tenant derived from context")
 	} else {
-		log.Printf("authentication disabled: tenant scope is unauthenticated (dev only)")
+		slog.Warn("authentication disabled", "mode", "tenant scope is unauthenticated (dev only)")
 	}
 	grpcSrv := grpc.NewServer(grpcOpts...)
 	contentv1.RegisterContentServiceServer(grpcSrv, grpchandler.NewServer(store))
@@ -125,7 +136,7 @@ func main() {
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{Addr: addr, Handler: mux}
 
-	log.Printf("content-service %s listening on %s (http) and %s (grpc)", version, addr, grpcLis.Addr())
+	slog.Info("content-service listening", "version", version, "http", addr, "grpc", grpcLis.Addr().String())
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -144,18 +155,18 @@ func main() {
 
 	select {
 	case err := <-errCh:
-		log.Fatalf("server: %v", err)
+		fatal("server failed", "err", err)
 	case sig := <-sigCh:
-		log.Printf("signal %v: draining", sig)
+		slog.Info("signal received, draining", "signal", sig.String())
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
 		grpcSrv.GracefulStop()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Fatalf("shutdown: %v", err)
+			fatal("shutdown failed", "err", err)
 		}
 	}
 
-	log.Printf("content-service stopped")
+	slog.Info("content-service stopped")
 }
 
 func dialObjectStore(
@@ -179,6 +190,6 @@ func dialObjectStore(
 	if err := store.EnsureBucket(ctx); err != nil {
 		return nil, nil, err
 	}
-	log.Printf("object storage ready: bucket %q at %s", cfg.S3.Bucket, cfg.S3.Endpoint)
+	slog.Info("object storage ready", "bucket", cfg.S3.Bucket, "endpoint", cfg.S3.Endpoint)
 	return store, parquet.NewReader(store), nil
 }

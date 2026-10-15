@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -95,11 +96,11 @@ func (c *Compactor) compactTenant(ctx context.Context, tenant string) error {
 			return err
 		}
 		if err := c.Blobs.Delete(ctx, f.Key); err != nil {
-			logf("compactor: old object cleanup %s failed (sweeper heals): %v", f.Key, err)
+			slog.Warn("compactor old object cleanup failed (sweeper heals)", "key", f.Key, "err", err)
 		}
 		observability.ParquetMergedFiles.WithLabelValues(tenant).Inc()
 	}
 	observability.ParquetMergedRows.WithLabelValues(tenant).Add(float64(len(rows)))
-	logf("compactor: tenant %s merged %d files (%d rows) into %s", tenant, len(files), len(rows), newKey)
+	slog.Info("compactor merged files", "tenant", tenant, "files", len(files), "rows", len(rows), "into", newKey)
 	return nil
 }
