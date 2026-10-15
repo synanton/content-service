@@ -40,7 +40,7 @@ Extended = Core **plus** all of:
 - **Tier forcing** (`CB-2/2a`): parquet and S3 paths forced by size; inline→externalized promotion atomicity.
 - **Lifecycle invariants** (`CB-3/3a`): disposition, integrity-sweep detection, orphan collection, compactor byte-exactness — plus an explicit `integrity_quarantine_not_implemented` check documenting the audit-only gap.
 - **Auth battery** (`CB-4a/4b`): D.1/D.2 promoted to a level; `default_posture_unauthenticated` asserted.
-- **Integrity coverage** (`CB-x`): full-coverage-period or sampling-rate guarantee asserted (closes AC-4).
+- **Integrity coverage** (`CB-x`): full read-path verification pinned (every Get recomputes SHA-256, fails closed, bytes never served), surface mapping asserted (HTTP 409 / gRPC DataLoss), sweep sampling stated with exact math, quarantine absence documented (`integrity_quarantine_not_implemented`). Closes AC-4.
 - **Capabilities contract** (`CB-5/5a`): versioned capabilities schema asserted against actual results.
 
 Until the Extended suite exists, no row may claim it. See

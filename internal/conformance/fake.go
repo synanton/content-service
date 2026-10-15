@@ -26,6 +26,19 @@ type fakeArtifact struct {
 	hold     bool
 }
 
+// CorruptPayload flips one byte of the stored payload to simulate
+// bit-rot or a tampered backend. The digest intentionally still records
+// the original bytes, so the next Get must fail closed.
+func (f *FakeStore) CorruptPayload(tenantID, artifactID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, err := f.lookup(tenantID, artifactID)
+	if err != nil || len(a.payload) == 0 {
+		return
+	}
+	a.payload[0] ^= 0xff
+}
+
 // FakeStore is an in-memory port.ContentStore with the production
 // semantics under test: per-tenant dedup, tenant-scoped reads,
 // digest verification, owner-scoped release, audited-by-construction
