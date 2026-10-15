@@ -56,7 +56,7 @@ func mintAuthToken(t *testing.T, tenant string, exp time.Time) string {
 
 func authedMux() http.Handler {
 	v := &middleware.HMACVerifier{Key: authKey, ExpectedIssuer: "synanton-security-provider"}
-	h := httphandler.NewHandler(store)
+	h := httphandler.NewHandler(store, nil)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/v1/artifacts", middleware.RequireAuth(v)(http.HandlerFunc(h.Put)))
 	mux.Handle("GET /api/v1/artifacts/", middleware.RequireAuth(v)(http.HandlerFunc(h.Get)))
@@ -177,7 +177,7 @@ func TestAuthGRPCEnforced(t *testing.T) {
 	v := &middleware.HMACVerifier{Key: authKey, ExpectedIssuer: "synanton-security-provider"}
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer(grpc.ChainUnaryInterceptor(middleware.UnaryServerInterceptor(v)))
-	contentv1.RegisterContentServiceServer(srv, grpchandler.NewServer(store))
+	contentv1.RegisterContentServiceServer(srv, grpchandler.NewServer(store, nil))
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 	conn, err := grpc.NewClient("passthrough:///bufnet",

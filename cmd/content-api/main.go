@@ -75,8 +75,8 @@ func main() {
 	}
 
 	store := postgres.NewStore(pool, cfg, blobs, rows)
-	h := httphandler.NewHandler(store)
 	auditor := security.NewAuditor(cfg.Security.AuditEnabled)
+	h := httphandler.NewHandler(store, auditor)
 
 	verifier, err := security.NewVerifier(cfg.Security.Auth)
 	if err != nil {
@@ -130,7 +130,7 @@ func main() {
 		slog.Warn("authentication disabled", "mode", "tenant scope is unauthenticated (dev only)")
 	}
 	grpcSrv := grpc.NewServer(grpcOpts...)
-	contentv1.RegisterContentServiceServer(grpcSrv, grpchandler.NewServer(store))
+	contentv1.RegisterContentServiceServer(grpcSrv, grpchandler.NewServer(store, auditor))
 	reflection.Register(grpcSrv)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)

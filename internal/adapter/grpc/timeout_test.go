@@ -12,7 +12,9 @@ import (
 // TestToStatusTimeout pins the timeout mapping: backend deadlines are
 // Unavailable (retryable), never Internal or a fabricated payload.
 func TestToStatusTimeout(t *testing.T) {
-	err := toStatus(fmt.Errorf("fetch object tier: %w", context.DeadlineExceeded))
+	srv := NewServer(nil, nil)
+	err := srv.toStatus(context.Background(), "get_failed", "tenant:acme", "artifact-9",
+		fmt.Errorf("fetch object tier: %w", context.DeadlineExceeded))
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("code = %v, want Unavailable", status.Code(err))
 	}

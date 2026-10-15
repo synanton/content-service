@@ -25,12 +25,31 @@ import (
 // governs and a conflicting message field fails with PermissionDenied.
 type Server struct {
 	contentv1.UnimplementedContentServiceServer
-	store port.ContentStore
+	store   port.ContentStore
+	auditor *security.Auditor
 }
 
-// NewServer wires the gRPC surface to the store port.
-func NewServer(store port.ContentStore) *Server {
-	return &Server{store: store}
+// NewServer wires the gRPC surface to the store port. A nil auditor
+// disables upstream-failure audit emission (benchmarks, transport-only
+// tests); production main always passes one.
+func NewServer(store port.ContentStore, auditor *security.Auditor) *Server {
+	return &Server{store: store, auditor: auditor}
+}
+
+// auditUpstream records an artifact-attributed audit event for an
+// upstream-availability failure. Exactly one record per failed
+// operation; see the HTTP Handler's auditUpstream for the contract.
+func (s *Server) auditUpstream(ctx context.Context, action, tenantID, artifactID, reason string) {
+	if s.auditor == nil {
+		return
+	}
+	s.auditor.Record(ctx, security.AuditEvent{
+		Actor:      "system",
+		Action:     action,
+		TenantID:   tenantID,
+		ArtifactID: artifactID,
+		Reason:     reason,
+	})
 }
 
 // tenantOf resolves the request tenant. When a validated security
@@ -63,7 +82,7 @@ func (s *Server) Put(ctx context.Context, req *contentv1.PutRequest) (*contentv1
 	})
 	if err != nil {
 		observability.PutErrors.WithLabelValues(tenantID).Inc()
-		return nil, toStatus(err)
+		return nil, s.toStatus(ctx, "put_failed", tenantID, "", err)
 	}
 	observability.PutLatency.WithLabelValues(
 		tenantID, res.Artifact.StorageTier).Observe(time.Since(start).Seconds())
@@ -92,7 +111,7 @@ func (s *Server) Get(ctx context.Context, req *contentv1.GetRequest) (*contentv1
 	data, art, err := s.store.Get(ctx, tenantID, req.GetArtifactId())
 	if err != nil {
 		observability.GetErrors.WithLabelValues(tenantID).Inc()
-		return nil, toStatus(err)
+		return nil, s.toStatus(ctx, "get_failed", tenantID, req.GetArtifactId(), err)
 	}
 	observability.GetLatency.WithLabelValues(
 		tenantID, art.StorageTier).Observe(time.Since(start).Seconds())
@@ -111,7 +130,7 @@ func (s *Server) Head(ctx context.Context, req *contentv1.HeadRequest) (*content
 	}
 	ok, err := s.store.Exists(ctx, tenantID, req.GetArtifactId())
 	if err != nil {
-		return nil, toStatus(err)
+		return nil, s.toStatus(ctx, "head_failed", tenantID, req.GetArtifactId(), err)
 	}
 	if !ok {
 		return nil, status.Error(codes.NotFound, "artifact not found")
@@ -129,7 +148,10 @@ func (s *Server) Capabilities(
 	}, nil
 }
 
-func toStatus(err error) error {
+func (s *Server) toStatus(ctx context.Context, action, tenantID, artifactID string, err error) error {
+	if reason, ok := s3adapter.AuditReason(err); ok {
+		s.auditUpstream(ctx, action, tenantID, artifactID, reason)
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.Unavailable, "storage backend timed out")

@@ -23,7 +23,7 @@ func grpcClient(t *testing.T) contentv1.ContentServiceClient {
 	t.Cleanup(func() { _ = lis.Close() })
 	srv := grpc.NewServer()
 	t.Cleanup(srv.GracefulStop)
-	contentv1.RegisterContentServiceServer(srv, grpchandler.NewServer(store))
+	contentv1.RegisterContentServiceServer(srv, grpchandler.NewServer(store, nil))
 	go func() { _ = srv.Serve(lis) }()
 	conn, err := grpc.NewClient("passthrough://bufnet",
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {

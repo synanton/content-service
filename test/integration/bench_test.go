@@ -275,7 +275,7 @@ func BenchmarkGetMissing(b *testing.B) {
 
 func httpBenchServer(b *testing.B) *httptest.Server {
 	b.Helper()
-	h := httphandler.NewHandler(store)
+	h := httphandler.NewHandler(store, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/artifacts", h.Put)
 	mux.HandleFunc("GET /api/v1/artifacts/", h.Get)
@@ -327,7 +327,7 @@ func BenchmarkGrpcPutGet(b *testing.B) {
 	b.Cleanup(func() { _ = lis.Close() })
 	srv := grpc.NewServer()
 	b.Cleanup(srv.GracefulStop)
-	contentv1.RegisterContentServiceServer(srv, grpchandler.NewServer(store))
+	contentv1.RegisterContentServiceServer(srv, grpchandler.NewServer(store, nil))
 	go func() { _ = srv.Serve(lis) }()
 	conn, err := grpc.NewClient("passthrough://bufnet",
 		grpc.WithContextDialer(func(dialCtx context.Context, _ string) (net.Conn, error) {

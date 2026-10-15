@@ -70,6 +70,30 @@ func (p Policy) Validate() error {
 	return nil
 }
 
+// Circuit-open and timeout reason codes. Canonical single source of
+// truth: the HTTP 503 codes and the audit reasons below both derive from
+// here, so the status surface and the audit stream cannot drift apart.
+const (
+	ReasonTimeout  = "UPSTREAM_TIMEOUT"
+	ReasonDegraded = "UPSTREAM_DEGRADED"
+)
+
+// AuditReason maps an upstream failure to its audit reason. It reports
+// false for failures that are not upstream-availability failures
+// (caller bugs, auth, integrity): those have their own audit actions.
+func AuditReason(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ReasonTimeout, true
+	}
+	if IsCircuitOpen(err) {
+		return ReasonDegraded, true
+	}
+	return "", false
+}
+
 // circuitOpenError is returned without touching the network while the
 // breaker is open. Callers treat it as a fast, retryable-later failure.
 type circuitOpenError struct {
