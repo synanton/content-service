@@ -155,8 +155,16 @@ func TestSlowBackendFailsClosedAndAudited(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 (%s)", rec.Code, rec.Body.String())
 	}
+	// Both bounds prove the intended path: below the 5 s backend delay
+	// (failed closed at the 500 ms deadline, not at backend speed) and
+	// above an instant failure (a bucket/config error fails in ms
+	// without ever engaging the slow backend — the original C-5 false
+	// positive).
 	if elapsed > 10*time.Second {
 		t.Fatalf("fail-closed took %v, want inside the deadline bound", elapsed)
+	}
+	if elapsed < 200*time.Millisecond {
+		t.Fatalf("failed in %v: backend never engaged (config error, not timeout)", elapsed)
 	}
 	events := auditEvents(t, &buf)
 	if len(events) != 1 {

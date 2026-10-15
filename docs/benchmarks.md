@@ -257,6 +257,13 @@ cost. Treat the overhead as "low single-digit ms, inside backend
 noise," not as either column's point value. First-try rate on the
 healthy backend is 100% (every op takes exactly 1 attempt).
 
+Limitation, stated not implied: at this sample size over a live
+backend, this bench cannot detect decorator overhead regressions —
+backend noise swamps sub-millisecond drift. Overhead regression
+detection wants a different harness (in-memory backend, controlled
+load, more iterations), not more samples here. Do not read the BB-5
+trend table as an overhead-regression detector.
+
 ### Retry distribution (deterministic failure proxy)
 
 | Case | first-try rate | op p50 / p95 | tries-p50 |
