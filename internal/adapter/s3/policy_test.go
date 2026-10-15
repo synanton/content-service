@@ -1,9 +1,12 @@
 package s3
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -216,6 +219,20 @@ func TestNoRetryOnNotFound(t *testing.T) {
 	}
 }
 
+func TestRetryOnTooManyRequests(t *testing.T) {
+	// 429 under load retries like 5xx (minio SlowDown analog).
+	fake := &scriptedTransport{errs: []error{
+		minio.ErrorResponse{StatusCode: 429, Code: "TooManyRequests"},
+	}}
+	g := guarded(t, fake, testPolicy())
+	if err := g.Put(context.Background(), "k", []byte("v"), "text/plain"); err != nil {
+		t.Fatalf("single 429: %v", err)
+	}
+	if n := fake.calls.Load(); n != 2 {
+		t.Fatalf("429 attempts = %d, want 2 (initial + one retry)", n)
+	}
+}
+
 func TestNoRetryOnClientError(t *testing.T) {
 	fake := &scriptedTransport{errs: []error{
 		minio.ErrorResponse{StatusCode: 403, Code: "AccessDenied"},
@@ -275,8 +292,21 @@ func TestBreakerOpensAndRecovers(t *testing.T) {
 	// and the breaker closes.
 	time.Sleep(60 * time.Millisecond)
 	fake.errs = nil
+	fake.calls.Store(0)
 	if err := g.Put(context.Background(), "k", []byte("v"), "text/plain"); err != nil {
 		t.Fatalf("half-open probe: %v", err)
+	}
+	// Recovery needs exactly one success: the next failure must go to
+	// the backend (attempts consumed, real error) rather than fast-fail.
+	fake.errs = []error{err503(), err503(), err503(), err503()}
+	fake.calls.Store(0)
+	before = fake.calls.Load()
+	err = g.Put(context.Background(), "k", []byte("v"), "text/plain")
+	if err == nil || IsCircuitOpen(err) {
+		t.Fatalf("post-recovery failure fast-failed: %v", err)
+	}
+	if n := fake.calls.Load(); n == before {
+		t.Fatal("post-recovery failure did not reach the backend")
 	}
 }
 
@@ -350,3 +380,37 @@ type wrappedError struct{ err error }
 
 func (e *wrappedError) Error() string { return "fetch object tier: " + e.err.Error() }
 func (e *wrappedError) Unwrap() error { return e.err }
+
+// TestOperationalEventsAreStructured proves the timeout and circuit
+// records carry the event field C-5's fault test filters on. These are
+// operational records (backend health), not actor-attributed audit:
+// artifact-level audit stays in the postgres layer, which owns tenant
+// context the S3 layer never sees.
+func TestOperationalEventsAreStructured(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	fake := &scriptedTransport{delay: 300 * time.Millisecond}
+	g := guarded(t, fake, testPolicy())
+	_ = g.Put(context.Background(), "k", []byte("v"), "text/plain")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	found := false
+	for _, line := range lines {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+			t.Fatalf("slog output is not JSON: %v", err)
+		}
+		if decoded["event"] == "s3.timeout" {
+			found = true
+			if decoded["op"] != "put" {
+				t.Errorf("timeout record missing op: %v", decoded)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no event=s3.timeout record:\n%s", buf.String())
+	}
+}

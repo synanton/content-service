@@ -34,10 +34,17 @@ type Config struct {
 
 // NewStore dials the endpoint lazily: minio.New validates parameters only,
 // so the first failing operation surfaces connectivity problems.
+//
+// The SDK's own retry budget (minio.MaxRetry, default 10) is neutralized
+// to a single try: this process's only minio user is this Store, and the
+// GuardedStore decorator owns the retry policy (bounded attempts inside
+// the op deadline, 5xx/429/network only). Two retry owners would
+// multiply attempts, inflate BB-4 latencies, and delay breaker signals.
 func NewStore(cfg Config) (*Store, error) {
 	if cfg.Bucket == "" {
 		return nil, fmt.Errorf("s3: bucket is required")
 	}
+	minio.MaxRetry = 1
 	lookup := minio.BucketLookupAuto
 	if cfg.PathStyle {
 		lookup = minio.BucketLookupPath

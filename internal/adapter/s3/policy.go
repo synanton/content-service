@@ -322,22 +322,25 @@ func checkKey(key string) error {
 	return nil
 }
 
-// do runs attempt under the breaker, a per-call timeout, and bounded
-// retries for transient backend failures. Success resets the breaker;
-// backend failure records one signal however many attempts ran.
+// do runs attempt under the breaker and a single overall deadline that
+// covers all attempts including backoffs: slow backends fail closed at
+// the bound, never at attempts × bound. Success resets the breaker; a
+// backend failure records one signal however many attempts ran. The
+// breaker is per GuardedStore (shared across operations): a dead backend
+// trips List and Get together, which matches the failure mode (backend
+// down, not operation down) and keeps BB-4 breaker-open events
+// unambiguous. Half-open recovery needs exactly one successful probe.
 func (s *GuardedStore) do(ctx context.Context, op string, timeout time.Duration, attempt func(ctx context.Context) error) error {
 	if !s.breaker.allow() {
 		return &circuitOpenError{op: op}
 	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	deadline, _ := callCtx.Deadline()
 	delay := s.policy.RetryBaseDelay
 	var err error
 	for n := 1; n <= s.policy.MaxAttempts; n++ {
-		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		err = attempt(callCtx)
-		// Read timer state before cancel: afterwards callCtx.Err is
-		// always non-nil and the timeout signal would be unreadable.
-		timedOut := callCtx.Err() != nil
-		cancel()
 		if err == nil {
 			s.breaker.success()
 			return nil
@@ -350,7 +353,7 @@ func (s *GuardedStore) do(ctx context.Context, op string, timeout time.Duration,
 		}
 		// Our deadline held while the backend did not answer: fail
 		// closed and record the backend signal.
-		if timedOut && ctx.Err() == nil {
+		if callCtx.Err() != nil {
 			s.breaker.failure(op)
 			slog.Warn("s3 operation timed out", "event", "s3.timeout",
 				"op", op, "timeout", timeout.String())
@@ -361,9 +364,21 @@ func (s *GuardedStore) do(ctx context.Context, op string, timeout time.Duration,
 			return err
 		}
 		if n < s.policy.MaxAttempts {
+			wait := backoff(delay, n)
+			// Deadline-aware backoff: never burn an attempt that cannot
+			// fit its budget. Returning the last real error keeps
+			// attempt-count evidence clean (no guaranteed-timeout tail).
+			if time.Until(deadline) < wait {
+				s.breaker.failure(op)
+				return fmt.Errorf("s3: %s deadline short of backoff after %d attempts: %w", op, n, err)
+			}
 			slog.Debug("s3 operation retrying", "op", op, "attempt", n+1, "err", err)
-			if !sleepOrDone(ctx, backoff(delay, n)) {
-				return fmt.Errorf("s3: %s cancelled during backoff: %w", op, ctx.Err())
+			if !sleepOrDone(callCtx, wait) {
+				if ctx.Err() != nil {
+					return fmt.Errorf("s3: %s: %w", op, ctx.Err())
+				}
+				s.breaker.failure(op)
+				return fmt.Errorf("s3: %s timed out in backoff after %d attempts: %w", op, n, context.DeadlineExceeded)
 			}
 		}
 	}
@@ -393,8 +408,9 @@ func sleepOrDone(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// retryable reports transient backend failures: 5xx and transport-level
-// errors. Missing objects, 4xx, and local validation errors never retry:
+// retryable reports transient backend failures: 5xx (including 503
+// SlowDown), 429 TooManyRequests under load, and transport-level errors.
+// Missing objects, other 4xx, and local validation errors never retry:
 // retrying them burns the budget and pollutes the breaker for a caller bug.
 func retryable(err error) bool {
 	if err == nil {
@@ -405,6 +421,9 @@ func retryable(err error) bool {
 	}
 	var resp minio.ErrorResponse
 	if errors.As(err, &resp) {
+		if resp.StatusCode == 429 {
+			return true
+		}
 		if resp.StatusCode >= 500 && resp.StatusCode < 600 {
 			return true
 		}
