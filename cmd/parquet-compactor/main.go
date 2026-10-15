@@ -27,6 +27,7 @@ func main() {
 	sweep := &jobs.Compactor{
 		Store:      store,
 		Blobs:      env.Blobs,
+		Auditor:    env.Auditor,
 		TargetRows: env.Config.Storage.ParquetTargetRows,
 		MaxFiles:   env.Config.Storage.ParquetMaxFiles,
 		Batch:      env.Config.Jobs.BatchSize,

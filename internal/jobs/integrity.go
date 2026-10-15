@@ -8,6 +8,7 @@ import (
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 )
 
 // Integrity re-reads payloads and verifies digests (design §5: integrity job).
@@ -22,6 +23,7 @@ type Integrity struct {
 	SampleRate float64
 	ShardIndex int
 	ShardCount int
+	Auditor    *security.Auditor
 }
 
 // Result summarizes one sweep.
@@ -76,5 +78,6 @@ func (in *Integrity) verifyOne(ctx context.Context, tenant, artifact string) (fa
 	if errors.Is(err, domain.ErrNotFound) {
 		return false, nil
 	}
+	AuditUpstream(ctx, in.Auditor, "integrity_failed", tenant, artifact, err)
 	return false, fmt.Errorf("integrity: verify %s/%s: %w", tenant, artifact, err)
 }

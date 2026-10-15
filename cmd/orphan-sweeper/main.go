@@ -25,11 +25,12 @@ func main() {
 
 	store := postgres.NewStore(env.Pool, env.Config, env.Blobs, env.Rows)
 	sweep := &jobs.Sweeper{
-		Store:  store,
-		Blobs:  env.Blobs,
-		Grace:  env.Config.Orphan.GracePeriod,
-		Batch:  env.Config.Jobs.BatchSize,
-		DryRun: env.Config.Orphan.DryRun,
+		Store:   store,
+		Blobs:   env.Blobs,
+		Auditor: env.Auditor,
+		Grace:   env.Config.Orphan.GracePeriod,
+		Batch:   env.Config.Jobs.BatchSize,
+		DryRun:  env.Config.Orphan.DryRun,
 	}
 
 	runner := jobs.Runner{Name: "orphan-sweeper", Interval: env.Config.Jobs.OrphanInterval,

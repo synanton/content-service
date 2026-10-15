@@ -15,14 +15,16 @@ import (
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/logging"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 )
 
 // Env holds the wired dependencies for one job process.
 type Env struct {
-	Config *config.Config
-	Pool   *pgxpool.Pool
-	Blobs  port.BlobStore
-	Rows   *parquet.Reader
+	Config  *config.Config
+	Pool    *pgxpool.Pool
+	Blobs   port.BlobStore
+	Rows    *parquet.Reader
+	Auditor *security.Auditor
 }
 
 // Setup loads config, connects Postgres, pings it, and ensures the bucket.
@@ -55,7 +57,7 @@ func Setup(ctx context.Context) (*Env, error) {
 		pool.Close()
 		return nil, fmt.Errorf("blob store lacks range reads")
 	}
-	return &Env{Config: cfg, Pool: pool, Blobs: blobs, Rows: parquet.NewReader(ranged)}, nil
+	return &Env{Config: cfg, Pool: pool, Blobs: blobs, Rows: parquet.NewReader(ranged), Auditor: security.NewAuditor(cfg.Security.AuditEnabled)}, nil
 }
 
 func dialBlobs(ctx context.Context, cfg *config.Config) (port.BlobStore, error) {

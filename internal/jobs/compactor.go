@@ -10,6 +10,7 @@ import (
 	"github.com/synanton/content-service/internal/adapter/parquet"
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
+	"github.com/synanton/content-service/internal/security"
 )
 
 // Compactor merges small immutable Parquet files into bigger ones.
@@ -24,6 +25,7 @@ type Compactor struct {
 	TargetRows int
 	MaxFiles   int
 	Batch      int
+	Auditor    *security.Auditor
 }
 
 func (c *Compactor) Sweep(ctx context.Context) error {
@@ -62,6 +64,7 @@ func (c *Compactor) compactTenant(ctx context.Context, tenant string) error {
 	for _, f := range files {
 		data, err := c.Blobs.Get(ctx, f.Key)
 		if err != nil {
+			AuditUpstream(ctx, c.Auditor, "compact_failed", tenant, f.Key, err)
 			return fmt.Errorf("compactor: read %s: %w", f.Key, err)
 		}
 		decoded, err := parquet.DecodeAll(data)
@@ -77,6 +80,7 @@ func (c *Compactor) compactTenant(ctx context.Context, tenant string) error {
 	newID := uuid.NewString()
 	newKey := "parquet/" + tenant + "/" + newID + ".parquet"
 	if err := c.Blobs.Put(ctx, newKey, encoded, "application/x-parquet"); err != nil {
+		AuditUpstream(ctx, c.Auditor, "compact_failed", tenant, newKey, err)
 		return fmt.Errorf("compactor: write %s: %w", newKey, err)
 	}
 	if err := c.Store.InsertParquetFile(ctx, ParquetFile{
@@ -96,6 +100,7 @@ func (c *Compactor) compactTenant(ctx context.Context, tenant string) error {
 			return err
 		}
 		if err := c.Blobs.Delete(ctx, f.Key); err != nil {
+			AuditUpstream(ctx, c.Auditor, "compact_failed", tenant, f.Key, err)
 			slog.Warn("compactor old object cleanup failed (sweeper heals)", "key", f.Key, "err", err)
 		}
 		observability.ParquetMergedFiles.WithLabelValues(tenant).Inc()

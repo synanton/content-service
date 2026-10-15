@@ -25,10 +25,11 @@ func main() {
 
 	store := postgres.NewStore(env.Pool, env.Config, env.Blobs, env.Rows)
 	sweep := &jobs.Disposition{
-		Store: store,
-		Blobs: env.Blobs,
-		Grace: env.Config.Retention.DispositionGracePeriod,
-		Batch: env.Config.Jobs.BatchSize,
+		Store:   store,
+		Blobs:   env.Blobs,
+		Auditor: env.Auditor,
+		Grace:   env.Config.Retention.DispositionGracePeriod,
+		Batch:   env.Config.Jobs.BatchSize,
 	}
 
 	runner := jobs.Runner{Name: "disposition", Interval: env.Config.Jobs.DispositionInterval,

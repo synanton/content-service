@@ -25,12 +25,13 @@ func main() {
 
 	store := postgres.NewStore(env.Pool, env.Config, env.Blobs, env.Rows)
 	sweep := &jobs.Integrity{
-		Store:        store,
-		Content:      store,
-		Batch:        env.Config.Jobs.BatchSize,
-		SampleRate:   env.Config.Integrity.SampleRate,
-		ShardIndex:   env.Config.Jobs.ShardIndex,
-		ShardCount:   env.Config.Jobs.ShardCount,
+		Store:      store,
+		Content:    store,
+		Auditor:    env.Auditor,
+		Batch:      env.Config.Jobs.BatchSize,
+		SampleRate: env.Config.Integrity.SampleRate,
+		ShardIndex: env.Config.Jobs.ShardIndex,
+		ShardCount: env.Config.Jobs.ShardCount,
 	}
 
 	runner := jobs.Runner{Name: "integrity", Interval: env.Config.Jobs.IntegrityInterval,

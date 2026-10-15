@@ -26,6 +26,7 @@ import (
 	"github.com/synanton/content-service/internal/adapter/parquet"
 	adapterpg "github.com/synanton/content-service/internal/adapter/postgres"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
+	"github.com/synanton/content-service/internal/jobs"
 	"github.com/synanton/content-service/internal/security"
 )
 
@@ -204,5 +205,32 @@ func TestSustainedSlownessOpensBreaker(t *testing.T) {
 		if ev["tenant"] == nil || ev["tenant"] == "" {
 			t.Errorf("audit lacks tenant: %v", ev)
 		}
+	}
+}
+
+// TestSlowBackendSweeperScanAudited extends the evidence chain to job
+// paths: the sweeper's reconciliation scan against the same slow backend
+// fails closed and emits its single system-level audit record (scan
+// failures carry no tenant; per-artifact failures below carry theirs).
+func TestSlowBackendSweeperScanAudited(t *testing.T) {
+	endpoint := slowProxy(t, 5*time.Second)
+	guarded := slowGuarded(t, endpoint, tightPolicy())
+	var buf bytes.Buffer
+	auditor := security.NewAuditorWithLogger(true, slog.New(slog.NewJSONHandler(&buf, nil)))
+	sweep := &jobs.Sweeper{
+		Store: store, Blobs: guarded,
+		Grace: time.Hour, Batch: 100, DryRun: true,
+		Auditor: auditor,
+	}
+	if err := sweep.Sweep(ctx); err == nil {
+		t.Fatal("sweeper scan against slow backend succeeded")
+	}
+	events := auditEvents(t, &buf)
+	if len(events) != 1 {
+		t.Fatalf("audit records = %d, want exactly 1:\n%s", len(events), buf.String())
+	}
+	got := events[0]
+	if got["action"] != "sweep_failed" || got["reason"] != "UPSTREAM_TIMEOUT" {
+		t.Errorf("action/reason = %v/%v", got["action"], got["reason"])
 	}
 }
