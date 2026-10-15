@@ -208,6 +208,8 @@ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/synanton/security-provider v0.0.0-20261014151854-66442f3c8876 h1:IGAYIcu+HMq01eSsTNB3s46ri4hyWoEbNNats/kkhds=
 github.com/synanton/security-provider v0.0.0-20261014151854-66442f3c8876/go.mod h1:/HxXoKjkf7bolfiDq+3xrQm9fIKNyXd2u1SuS0nP9xc=
+github.com/synanton/security-provider v0.1.0 h1:mprfcOpQ9BA5QHkzfbJ++W2T3YwSb+4OSNgCxNbc9Tw=
+github.com/synanton/security-provider v0.1.0/go.mod h1:/HxXoKjkf7bolfiDq+3xrQm9fIKNyXd2u1SuS0nP9xc=
 github.com/testcontainers/testcontainers-go v0.33.0 h1:zJS9PfXYT5O0ZFXM2xxXfk4J5UMw/kRiISng037Gxdw=
 github.com/testcontainers/testcontainers-go v0.33.0/go.mod h1:W80YpTa8D5C3Yy16icheD01UTDu+LmXIA2Keo+jWtT8=
 github.com/testcontainers/testcontainers-go/modules/postgres v0.33.0 h1:c+Gt+XLJjqFAejgX4hSpnHIpC9eAhvgI/TFWL/PbrFI=
