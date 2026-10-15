@@ -232,11 +232,69 @@ Local-container observations only — adopt as SLOs after staging measurements:
 | Compactor merge (10 files) | < 1 s |
 | Integrity sweep coverage | 100% of artifacts within 30 days (via sharding + sampling) |
 
+## Deadline policy (BB-4, confirmatory)
+
+AC-2 is closed via C-5's fault tests; these numbers confirm the policy
+quantitatively and seed the BB-5 trend table. Same evidence rules as
+above: ranges, not gates; shared-runner noise applies doubly here
+because the guarded and raw arms run sequentially.
+
+Run provenance: same host as above (i9-12900T), 2026-10-15, go 1.23.0,
+`-benchtime=100x` except raw-contrast (manual N=3, see below).
+
+### Happy-path overhead (guarded vs raw, healthy backend, 5 KiB)
+
+| Arm | put p50 / p95 / p99 | get p50 / p95 / p99 |
+|---|---|---|
+| raw | 1.56 / 3.44 / 5.38 ms | 1.19 / 3.63 / 5.65 ms |
+| guarded | 4.76 / 6.02 / 6.47 ms | 3.42 / 4.40 / 4.60 ms |
+
+Both arms warmed up (3 untimed ops) before measuring. The guarded arm
+reads ~2–3 ms slower at p50 with overlapping p95/p99 — decorator cost
+(timer setup, breaker check) is sub-millisecond by construction; the
+visible delta is S3 RTT variance between sequential arms, not policy
+cost. Treat the overhead as "low single-digit ms, inside backend
+noise," not as either column's point value. First-try rate on the
+healthy backend is 100% (every op takes exactly 1 attempt).
+
+### Retry distribution (deterministic failure proxy)
+
+| Case | first-try rate | op p50 / p95 | tries-p50 |
+|---|---|---|---|
+| always-503 (MaxAttempts 5) | 0 | 487 / 736 ms | 5.000 |
+| always-429 (MaxAttempts 5) | 0 | 521 / 714 ms | 5.000 |
+| once-503-then-pass | 0 | 112 / 202 ms | 2.000 |
+
+Attempts are exact (proxy hit counter, one hit per decorator attempt).
+No pooled mean is reported: retries only happen on failure, so the
+distribution is bimodal and the tail is the policy's whole effect.
+
+### Slow backend (3 s delay, 300 ms deadline)
+
+| Arm | op p50 | Outcome |
+|---|---|---|
+| guarded (N=100) | 300.8 ms (p95 301.3) | fails closed at the bound, every op |
+| raw, 10 s cap (manual N=3) | 3011 ms | succeeds at ~delay |
+
+The raw arm is a correctness contrast, not a latency comparison: it has
+no bound, so its "latency" is whatever the backend eventually does. The
+reported number is the tail the policy eliminates (10×), not an average
+the no-policy arm achieved.
+
+### Breaker transitions (threshold 2, cooldown 100 ms)
+
+| Transition | p50 / p95 |
+|---|---|
+| half-open probe → close | 13–16 / 17–18 ms across runs |
+
+Dominated by the probe's own S3 call, as expected. Open → half-open is
+the cooldown constant (confirmed by config, not measured).
+
 ## What remains
 
 - Production payload-size distribution (p50/p95/p99 per intent type over 30 days, per proposal Phase 6) to finalize thresholds.
 - Open-loop arrival patterns (k6 scale) and multi-MiB payloads — current numbers are closed-loop only.
 - Sustained multi-hour soaks (`CONTENT_BENCH_SOAK_SECONDS` raises the churn benchmark window; default 30 s).
-- Server-side deadlines for slow (not dead) object storage.
+- ~~Server-side deadlines for slow (not dead) object storage.~~ Done: C-4 policy + C-5 fault battery + BB-4 numbers above.
 - Nightly CI trend tracking (results committed per run; regressions as trends, not anecdotes).
 - Grafana dashboards over the existing Prometheus metrics.
