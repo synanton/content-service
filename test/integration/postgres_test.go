@@ -32,6 +32,7 @@ var (
 	pool           *pgxpool.Pool
 	store          *adapterpg.Store
 	blobs          port.BlobStore
+	rawBlobs       *s3adapter.Store
 	rows           *parquet.Reader
 	cfg            *config.Config
 	minioContainer testcontainers.Container
@@ -64,6 +65,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	blobs = guarded
+	// rawBlobs is the same backend without the deadline policy: the
+	// unguarded arm of the BB-4 comparison. Same binary, same backend,
+	// same conditions — the comparison measures the policy, not the
+	// harness.
+	rawBlobs = s3store
 	rows = parquet.NewReader(guarded)
 	store = adapterpg.NewStore(pool, cfg, blobs, rows)
 	os.Exit(m.Run())

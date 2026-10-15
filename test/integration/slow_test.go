@@ -30,6 +30,10 @@ import (
 	"github.com/synanton/content-service/internal/security"
 )
 
+// testBucket is created by startMinio in TestMain; proxy-backed
+// stores must use it, not the dev default from configs.
+const testBucket = "content-it"
+
 // slowProxy fronts MinIO and stalls every request by delay, emulating a
 // degraded-but-listening backend (timeouts, not connection refused).
 func slowProxy(t *testing.T, delay time.Duration) string {
@@ -63,7 +67,7 @@ func slowGuarded(t *testing.T, endpoint string, policy s3adapter.Policy) *s3adap
 	t.Helper()
 	raw, err := s3adapter.NewStore(s3adapter.Config{
 		Endpoint:  endpoint,
-		Bucket:    "synanton-content",
+		Bucket:    testBucket,
 		Region:    "us-east-1",
 		AccessKey: "minioadmin",
 		SecretKey: "minioadmin",

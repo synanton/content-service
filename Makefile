@@ -39,6 +39,12 @@ BENCHTIME ?= 100x
 bench-integration:
 	$(GO) test -run=NONE -tags=integration -bench=. -benchmem -benchtime=$(BENCHTIME) ./test/integration/...
 
+# Policy benchmarks only (BB-4): deadline overhead, retry distributions,
+# slow-backend contrast, breaker transitions. Shorter sample count keeps
+# the slow arms bounded (~1 min); use BENCHTIME=100x for doc numbers.
+bench-policy:
+	$(GO) test -run=NONE -tags=integration -bench='Policy|Breaker' -benchmem -benchtime=10x ./test/integration/...
+
 tools:
 	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
