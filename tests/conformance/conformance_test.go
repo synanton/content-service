@@ -2,9 +2,10 @@ package conformance
 
 import (
 	"testing"
+	"time"
 
-	"github.com/synanton/content-service/internal/conformance"
 	"github.com/synanton/content-service/internal/config"
+	"github.com/synanton/content-service/internal/conformance"
 )
 
 func TestCoreContractAgainstFake(t *testing.T) {
@@ -16,6 +17,14 @@ func TestServerStartsWithValidConfig(t *testing.T) {
 		DB: config.DBConfig{
 			URL:            "postgres://localhost:5432/content?sslmode=disable",
 			MaxConnections: 20,
+		},
+		S3: config.S3Config{
+			OpTimeout:        30 * time.Second,
+			ListTimeout:      2 * time.Minute,
+			MaxAttempts:      3,
+			RetryBaseDelay:   200 * time.Millisecond,
+			BreakerThreshold: 5,
+			BreakerCooldown:  30 * time.Second,
 		},
 		Storage: config.StorageConfig{
 			InlineThresholdBytes: 4096,

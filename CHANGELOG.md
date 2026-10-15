@@ -6,6 +6,7 @@ Keep-a-Changelog (Added / Changed / Deprecated / Removed / Fixed / Security) per
 
 ### Added
 
+- Per-operation S3 deadlines with bounded retry and circuit breaker (C-4): `GuardedStore` decorator enforces `CONTENT_S3_OP_TIMEOUT` (point ops) / `CONTENT_S3_LIST_TIMEOUT` (scans), retries 5xx/network only within the deadline, and fast-fails through a consecutive-failure breaker. Timeouts surface as `503 UPSTREAM_TIMEOUT` (gRPC `Unavailable`); open breakers as `503 UPSTREAM_DEGRADED`. Caller cancellation never trips the breaker. Policy is config-validated at startup.
 - S3/MinIO backing for `parquet` and `s3` tiers (`BlobStore` port + minio adapter, content-addressed keys, bucket auto-creation on startup). Postgres keeps inline bytes; object-tier rows store `payload NULL` and remain readable alongside legacy inline rows.
 - gRPC surface (`content.v1.ContentService`: Put/Get/Head/Capabilities, server reflection) on `:50051` alongside the REST API; `proto/content/v1/content.proto` is the contract, `gen/` holds buf-generated stubs.
 - `make proto` regenerates stubs (buf + protoc-gen-go + protoc-gen-go-grpc required).

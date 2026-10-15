@@ -70,6 +70,9 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 | `CONTENT_KMS_KEY_ID` | — (empty) | Optional envelope encryption key (reserved) |
 | `CONTENT_LOG_LEVEL` / `CONTENT_METRICS_ENABLED` / `CONTENT_TRACING_ENABLED` | `info` / `true` / `true` | Logging and observability toggles (`CONTENT_OTEL_ENDPOINT` for traces) |
 | `CONTENT_AUDIT_ENABLED` | `true` | Legal-hold and retention changes audited |
+| `CONTENT_S3_OP_TIMEOUT` / `CONTENT_S3_LIST_TIMEOUT` | `30s` / `2m` | Per-op and scan deadlines (retries included); slow backends fail closed |
+| `CONTENT_S3_MAX_ATTEMPTS` / `CONTENT_S3_RETRY_BASE_DELAY` | `3` / `200ms` | Total tries; backoff doubles. 5xx/network only — 4xx, missing objects, validation never retry |
+| `CONTENT_S3_BREAKER_THRESHOLD` / `CONTENT_S3_BREAKER_COOLDOWN` | `5` / `30s` | Consecutive backend failures to open; fast-fail window before a probe |
 
 ## 4. Health signals
 
@@ -86,6 +89,8 @@ SIGTERM (or SIGINT) → in-flight HTTP drains within 30s → exit 0. `/healthz` 
 |---|---|---|
 | Postgres down | `/readyz` 503, puts/gets 500 | Restore Postgres; no data loss (writes fail fast, nothing half-persisted) |
 | MinIO/S3 down | Inline puts/gets keep working; `parquet`/`s3` puts fail fast and their gets fail closed | Restore MinIO; no metadata corruption (failed puts leave no half-persisted rows) |
+| MinIO/S3 slow (past `CONTENT_S3_OP_TIMEOUT`) | `503 UPSTREAM_TIMEOUT`, `event=s3.timeout` in logs; retries exhausted within the deadline | Check backend latency; timeouts bound total time including retries — do not raise the timeout past the revocation/UX budget without a benchmark |
+| MinIO/S3 repeatedly failing (≥ `CONTENT_S3_BREAKER_THRESHOLD`) | `503 UPSTREAM_DEGRADED`, `event=s3.circuit state=open`; no backend traffic until cooldown probe | Same as down; breaker resets on first successful probe (`event=s3.circuit state=closed`) |
 | Digest mismatch on read | `409 INTEGRITY_MISMATCH` | Quarantine artifact, alert; do not serve bytes |
 | Cross-tenant probe | `404 NOT_FOUND` (indistinguishable) | Expected; alert only on volume anomaly |
 | Legal hold in place | Disposition skipped for held artifacts | Release requires `content.admin.legal_hold` role + reason; audited |

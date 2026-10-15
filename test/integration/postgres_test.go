@@ -19,8 +19,8 @@ import (
 	pgtest "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	adapterpg "github.com/synanton/content-service/internal/adapter/postgres"
 	"github.com/synanton/content-service/internal/adapter/parquet"
+	adapterpg "github.com/synanton/content-service/internal/adapter/postgres"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/domain"
@@ -49,8 +49,22 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "integration setup:", err)
 		os.Exit(1)
 	}
-	blobs = s3store
-	rows = parquet.NewReader(s3store)
+	// The real stack runs behind the deadline policy (C-4): wrap exactly
+	// as main and jobsboot do, from the same config values.
+	guarded, err := s3store.WithPolicy(s3adapter.Policy{
+		OpTimeout:        cfg.S3.OpTimeout,
+		ListTimeout:      cfg.S3.ListTimeout,
+		MaxAttempts:      cfg.S3.MaxAttempts,
+		RetryBaseDelay:   cfg.S3.RetryBaseDelay,
+		BreakerThreshold: cfg.S3.BreakerThreshold,
+		BreakerCooldown:  cfg.S3.BreakerCooldown,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "integration setup:", err)
+		os.Exit(1)
+	}
+	blobs = guarded
+	rows = parquet.NewReader(guarded)
 	store = adapterpg.NewStore(pool, cfg, blobs, rows)
 	os.Exit(m.Run())
 }
@@ -133,6 +147,14 @@ func startPostgres(ctx context.Context) (*pgxpool.Pool, *config.Config, error) {
 	c.Retention.LegalHoldEnabled = true
 	c.Integrity.VerifyOnPublish = true
 	c.Security.AuditEnabled = true
+	// Non-default deadline values prove the wiring reads config rather
+	// than baking in defaults.
+	c.S3.OpTimeout = 60 * time.Second
+	c.S3.ListTimeout = 5 * time.Minute
+	c.S3.MaxAttempts = 2
+	c.S3.RetryBaseDelay = 50 * time.Millisecond
+	c.S3.BreakerThreshold = 10
+	c.S3.BreakerCooldown = 10 * time.Second
 	c.Jobs.BatchSize = 10000
 	c.Jobs.ShardIndex = 0
 	c.Jobs.ShardCount = 1

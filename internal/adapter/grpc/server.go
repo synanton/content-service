@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	contentv1 "github.com/synanton/content-service/gen/content/v1"
+	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
@@ -130,6 +131,10 @@ func (s *Server) Capabilities(
 
 func toStatus(err error) error {
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.Unavailable, "storage backend timed out")
+	case s3adapter.IsCircuitOpen(err):
+		return status.Error(codes.Unavailable, "storage backend degraded")
 	case errors.Is(err, domain.ErrNotFound):
 		return status.Error(codes.NotFound, "artifact not found")
 	case errors.Is(err, domain.ErrIntegrityMismatch):

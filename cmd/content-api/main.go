@@ -18,10 +18,10 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	contentv1 "github.com/synanton/content-service/gen/content/v1"
+	grpchandler "github.com/synanton/content-service/internal/adapter/grpc"
+	httphandler "github.com/synanton/content-service/internal/adapter/http"
 	"github.com/synanton/content-service/internal/adapter/parquet"
 	"github.com/synanton/content-service/internal/adapter/postgres"
-	httphandler "github.com/synanton/content-service/internal/adapter/http"
-	grpchandler "github.com/synanton/content-service/internal/adapter/grpc"
 	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/config"
 	"github.com/synanton/content-service/internal/logging"
@@ -187,9 +187,20 @@ func dialObjectStore(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := store.EnsureBucket(ctx); err != nil {
+	guarded, err := store.WithPolicy(s3adapter.Policy{
+		OpTimeout:        cfg.S3.OpTimeout,
+		ListTimeout:      cfg.S3.ListTimeout,
+		MaxAttempts:      cfg.S3.MaxAttempts,
+		RetryBaseDelay:   cfg.S3.RetryBaseDelay,
+		BreakerThreshold: cfg.S3.BreakerThreshold,
+		BreakerCooldown:  cfg.S3.BreakerCooldown,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := guarded.EnsureBucket(ctx); err != nil {
 		return nil, nil, err
 	}
 	slog.Info("object storage ready", "bucket", cfg.S3.Bucket, "endpoint", cfg.S3.Endpoint)
-	return store, parquet.NewReader(store), nil
+	return guarded, parquet.NewReader(guarded), nil
 }

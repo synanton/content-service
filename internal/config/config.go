@@ -8,16 +8,16 @@ import (
 )
 
 type Config struct {
-	DB       DBConfig
-	S3       S3Config
-	Storage  StorageConfig
-	Retention RetentionConfig
-	Integrity IntegrityConfig
-	Orphan   OrphanConfig
-	Security SecurityConfig
+	DB            DBConfig
+	S3            S3Config
+	Storage       StorageConfig
+	Retention     RetentionConfig
+	Integrity     IntegrityConfig
+	Orphan        OrphanConfig
+	Security      SecurityConfig
 	Observability ObservabilityConfig
-	Server   ServerConfig
-	Jobs     JobsConfig
+	Server        ServerConfig
+	Jobs          JobsConfig
 }
 
 type JobsConfig struct {
@@ -42,15 +42,34 @@ type S3Config struct {
 	AccessKey    string
 	SecretKey    string
 	UsePathStyle bool
+	// Per-operation deadlines (C-4). OpTimeout bounds point operations
+	// (Put/Get/Stat/Delete/Range); ListTimeout bounds reconciliation
+	// scans, which legitimately run longer. Both cap total time
+	// including retries: a slow-but-not-failed backend fails closed
+	// instead of stalling callers.
+	OpTimeout   time.Duration
+	ListTimeout time.Duration
+	// Retry budget for idempotent operations. Attempts counts total
+	// tries (1 initial + retries), backoff doubles from base per try.
+	// Only retryable failures (5xx, network errors) retry; 4xx,
+	// missing objects, and validation errors never do.
+	MaxAttempts    int
+	RetryBaseDelay time.Duration
+	// Circuit breaker: Threshold consecutive failures open the breaker
+	// for Cooldown, failing fast without touching the network. A
+	// successful probe half-closes it. Protects control loops (jobs,
+	// readiness) from retry storms against a dead backend.
+	BreakerThreshold int
+	BreakerCooldown  time.Duration
 }
 
 type StorageConfig struct {
-	InlineThresholdBytes  int
-	ObjectThresholdBytes  int
-	ParquetBatchSize      int
-	ParquetCompression    string
-	ParquetTargetRows     int
-	ParquetMaxFiles       int
+	InlineThresholdBytes int
+	ObjectThresholdBytes int
+	ParquetBatchSize     int
+	ParquetCompression   string
+	ParquetTargetRows    int
+	ParquetMaxFiles      int
 }
 
 type RetentionConfig struct {
@@ -67,9 +86,9 @@ type IntegrityConfig struct {
 }
 
 type OrphanConfig struct {
-	GracePeriod  time.Duration
+	GracePeriod   time.Duration
 	SweepInterval time.Duration
-	DryRun       bool
+	DryRun        bool
 }
 
 type SecurityConfig struct {
@@ -92,9 +111,9 @@ type AuthConfig struct {
 }
 
 type ObservabilityConfig struct {
-	LogLevel       string
-	MetricsEnabled bool
-	TracingEnabled bool
+	LogLevel        string
+	MetricsEnabled  bool
+	TracingEnabled  bool
 	TracingEndpoint string
 }
 
@@ -114,12 +133,18 @@ func Load() (*Config, error) {
 			MaxConnections: getEnvInt("CONTENT_DB_MAX_CONNECTIONS", 20),
 		},
 		S3: S3Config{
-			Endpoint:     getEnv("CONTENT_S3_ENDPOINT", "http://localhost:9000"),
-			Bucket:       getEnv("CONTENT_S3_BUCKET", "synanton-content"),
-			Region:       getEnv("CONTENT_S3_REGION", "us-east-1"),
-			AccessKey:    getEnv("CONTENT_S3_ACCESS_KEY", "minioadmin"),
-			SecretKey:    getEnv("CONTENT_S3_SECRET_KEY", "minioadmin"),
-			UsePathStyle: getEnvBool("CONTENT_S3_USE_PATH_STYLE", true),
+			Endpoint:         getEnv("CONTENT_S3_ENDPOINT", "http://localhost:9000"),
+			Bucket:           getEnv("CONTENT_S3_BUCKET", "synanton-content"),
+			Region:           getEnv("CONTENT_S3_REGION", "us-east-1"),
+			AccessKey:        getEnv("CONTENT_S3_ACCESS_KEY", "minioadmin"),
+			SecretKey:        getEnv("CONTENT_S3_SECRET_KEY", "minioadmin"),
+			UsePathStyle:     getEnvBool("CONTENT_S3_USE_PATH_STYLE", true),
+			OpTimeout:        getEnvDuration("CONTENT_S3_OP_TIMEOUT", 30*time.Second),
+			ListTimeout:      getEnvDuration("CONTENT_S3_LIST_TIMEOUT", 2*time.Minute),
+			MaxAttempts:      getEnvInt("CONTENT_S3_MAX_ATTEMPTS", 3),
+			RetryBaseDelay:   getEnvDuration("CONTENT_S3_RETRY_BASE_DELAY", 200*time.Millisecond),
+			BreakerThreshold: getEnvInt("CONTENT_S3_BREAKER_THRESHOLD", 5),
+			BreakerCooldown:  getEnvDuration("CONTENT_S3_BREAKER_COOLDOWN", 30*time.Second),
 		},
 		Storage: StorageConfig{
 			InlineThresholdBytes: getEnvInt("CONTENT_INLINE_THRESHOLD_BYTES", 4096),
@@ -215,6 +240,24 @@ func (c *Config) Validate() error {
 	}
 	if c.Security.Auth.Enabled && len(c.Security.Auth.HMACKey) < 32 {
 		return fmt.Errorf("auth HMAC key must be at least 32 bytes when CONTENT_AUTH_ENABLED=true")
+	}
+	if c.S3.OpTimeout <= 0 {
+		return fmt.Errorf("s3 op timeout must be positive")
+	}
+	if c.S3.ListTimeout <= 0 {
+		return fmt.Errorf("s3 list timeout must be positive")
+	}
+	if c.S3.MaxAttempts < 1 {
+		return fmt.Errorf("s3 max attempts must be at least 1 (no retry)")
+	}
+	if c.S3.RetryBaseDelay < 0 {
+		return fmt.Errorf("s3 retry base delay must be non-negative")
+	}
+	if c.S3.BreakerThreshold < 1 {
+		return fmt.Errorf("s3 breaker threshold must be at least 1")
+	}
+	if c.S3.BreakerCooldown < 0 {
+		return fmt.Errorf("s3 breaker cooldown must be non-negative")
 	}
 	return nil
 }

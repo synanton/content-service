@@ -48,10 +48,17 @@ func Setup(ctx context.Context) (*Env, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &Env{Config: cfg, Pool: pool, Blobs: blobs, Rows: parquet.NewReader(blobs)}, nil
+	// Range reads need more than the BlobStore port; the guarded S3
+	// backend provides them. Fail fast if a future backend does not.
+	ranged, ok := blobs.(parquet.RangeGetter)
+	if !ok {
+		pool.Close()
+		return nil, fmt.Errorf("blob store lacks range reads")
+	}
+	return &Env{Config: cfg, Pool: pool, Blobs: blobs, Rows: parquet.NewReader(ranged)}, nil
 }
 
-func dialBlobs(ctx context.Context, cfg *config.Config) (*s3adapter.Store, error) {
+func dialBlobs(ctx context.Context, cfg *config.Config) (port.BlobStore, error) {
 	endpoint := cfg.S3.Endpoint
 	secure := strings.HasPrefix(endpoint, "https://")
 	endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
@@ -67,8 +74,25 @@ func dialBlobs(ctx context.Context, cfg *config.Config) (*s3adapter.Store, error
 	if err != nil {
 		return nil, err
 	}
-	if err := blobs.EnsureBucket(ctx); err != nil {
+	guarded, err := blobs.WithPolicy(policyFromConfig(cfg))
+	if err != nil {
 		return nil, err
 	}
-	return blobs, nil
+	if err := guarded.EnsureBucket(ctx); err != nil {
+		return nil, err
+	}
+	return guarded, nil
+}
+
+// policyFromConfig translates the validated S3 config into the adapter
+// deadline policy. Config validation already bounds every field.
+func policyFromConfig(cfg *config.Config) s3adapter.Policy {
+	return s3adapter.Policy{
+		OpTimeout:        cfg.S3.OpTimeout,
+		ListTimeout:      cfg.S3.ListTimeout,
+		MaxAttempts:      cfg.S3.MaxAttempts,
+		RetryBaseDelay:   cfg.S3.RetryBaseDelay,
+		BreakerThreshold: cfg.S3.BreakerThreshold,
+		BreakerCooldown:  cfg.S3.BreakerCooldown,
+	}
 }

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	s3adapter "github.com/synanton/content-service/internal/adapter/s3"
 	"github.com/synanton/content-service/internal/domain"
 	"github.com/synanton/content-service/internal/observability"
 	"github.com/synanton/content-service/internal/port"
@@ -82,6 +84,12 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, errorBody{Code: code, Message: msg})
+}
+
+// isCircuitOpen reports a fail-fast breaker rejection. Both surfaces
+// map it to 503/Unavailable: the backend is degraded, not the request.
+func isCircuitOpen(err error) bool {
+	return s3adapter.IsCircuitOpen(err)
 }
 
 func (h *Handler) Put(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +206,10 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeStoreError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(w, http.StatusServiceUnavailable, "UPSTREAM_TIMEOUT", "storage backend timed out")
+	case isCircuitOpen(err):
+		writeError(w, http.StatusServiceUnavailable, "UPSTREAM_DEGRADED", "storage backend degraded")
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "artifact not found")
 	case errors.Is(err, domain.ErrIntegrityMismatch):
