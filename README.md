@@ -16,7 +16,14 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 **Pre-alpha.** Under active development. Not production-ready. See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the current phase and [`CONTRIBUTING.md`](CONTRIBUTING.md) for the acceptance gates.
 
-*State as of 2026-10-14 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 51 integration tests green, workload scenarios measured.*
+*Evidence snapshot dated 2026-10-14 — Phase 5: background jobs + Parquet compaction live; the 14-check Core conformance suite, 51 integration tests, and workload scenarios were reported green/measured at that date. This PR's test run is not a rerun of that conformance report.*
+
+This repository implements the **canonical Content Cache 1.26 artifact-store
+contract**. It is distinct from the platform's separate ingestion-cache path
+(for ingestion-pipeline state and handoff); the existence and tests of this
+reference service do not prove that the Phase 1 BM25 demo uses it end to end.
+See the platform's dated [acceptance record](https://github.com/synanton/platform/blob/main/docs/acceptance/p0-ingestion-search-2026-10-21.md)
+for that path's actual components and evidence.
 
 ### Maturity
 
@@ -33,7 +40,7 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 | Background jobs (disposition, integrity, orphan sweeper) | ✅ | ✅ (testcontainers) | ⬜ | ✅ (sweep benches) |
 | Parquet compaction (merge small files) | ✅ | ✅ (testcontainers) | ⬜ | ✅ (merge bench) |
 
-`⬜` = not yet; nothing in this table is claimed before its evidence exists. Benchmark evidence lives in [`docs/benchmarks.md`](docs/benchmarks.md) with environment provenance. Conformance levels (Core = implemented 14-check store suite; Extended = defined, no suite yet) live in [`docs/conformance.md`](docs/conformance.md). Benchmark ✅ means latency-at-low-concurrency only — single worker, `-benchtime=100x` unless noted, functions in `test/integration/bench_test.go` (micros in `pkg/digest`, `pkg/reference`): no concurrency-scaling, noisy-neighbor, auth-overhead, or degradation numbers exist yet.
+`⬜` = not yet; nothing in this table is claimed before its evidence exists. The Core conformance result above is the dated 2026-10-14 snapshot, not a check run for every later commit. Benchmark evidence lives in [`docs/benchmarks.md`](docs/benchmarks.md) with environment provenance. Conformance levels (Core = implemented 14-check store suite; Extended = defined, no suite yet) live in [`docs/conformance.md`](docs/conformance.md). Benchmark ✅ means latency-at-low-concurrency only — single worker, `-benchtime=100x` unless noted, functions in `test/integration/bench_test.go` (micros in `pkg/digest`, `pkg/reference`): no concurrency-scaling, noisy-neighbor, auth-overhead, or degradation numbers exist yet. Neither these snapshots nor component tests establish current load/SLO acceptance or platform end-to-end adoption.
 
 Explicitly out of scope for v0.2.0: open-batch Parquet appends (writes are single-row files; merging is implemented), multi-region storage, Prometheus dashboards. ⬜ rows above are deferred by decision, not pending by oversight.
 
@@ -337,6 +344,10 @@ Developer documentation is published as a book at [synanton.github.io/content-se
 - **Using** — HTTP and gRPC API reference, operator runbook
 - **Architecture** — architecture overview, design document, schema reference
 - **Developing** — implementation guide and plan
+
+The [documentation inventory](docs/DOCUMENTATION-INVENTORY.md) records the
+canonical sources and the distinction between contract implementation,
+conformance, and end-to-end adoption.
 
 ---
 
