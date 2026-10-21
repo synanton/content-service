@@ -8,4 +8,4 @@ This book is built from the repository's `docs/` on every merge and published to
 - **Understanding the design** — [architecture](architecture.md), the full [design document](design.md), and the [schema reference](schema.md).
 - **Contributing** — the [implementation guide](IMPLEMENTATION.md) (what to build next) and the [implementation plan](implementation-plan.md) (the plan of record).
 
-The repository [README](https://github.com/synanton/content-service#readme) covers quick start, configuration, and the current implementation status.
+The repository [README](https://github.com/synanton/content-service#readme) covers quick start, configuration, and current implementation status. The [documentation inventory](DOCUMENTATION-INVENTORY.md) records canonical sources and status dispositions.

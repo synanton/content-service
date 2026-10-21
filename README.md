@@ -18,6 +18,13 @@ If a payload enters the platform, it gets a digest. If it leaves, the digest is 
 
 *State as of 2026-10-14 — Phase 5: background jobs + Parquet compaction live, 14-check conformance suite, 51 integration tests green, workload scenarios measured.*
 
+This repository implements the **canonical Content Cache 1.26 artifact-store
+contract**. It is distinct from the platform's separate ingestion-cache path
+(for ingestion-pipeline state and handoff); the existence and tests of this
+reference service do not prove that the Phase 1 BM25 demo uses it end to end.
+See the platform's dated [acceptance record](https://github.com/synanton/platform/blob/main/docs/acceptance/p0-ingestion-search-2026-10-21.md)
+for that path's actual components and evidence.
+
 ### Maturity
 
 | Area | Implemented | Unit/integration tested | Conformance-validated | Benchmark-validated |
@@ -337,6 +344,10 @@ Developer documentation is published as a book at [synanton.github.io/content-se
 - **Using** — HTTP and gRPC API reference, operator runbook
 - **Architecture** — architecture overview, design document, schema reference
 - **Developing** — implementation guide and plan
+
+The [documentation inventory](docs/DOCUMENTATION-INVENTORY.md) records the
+canonical sources and the distinction between contract implementation,
+conformance, and end-to-end adoption.
 
 ---
 
