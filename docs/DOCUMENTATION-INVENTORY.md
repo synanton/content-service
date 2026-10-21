@@ -7,7 +7,7 @@ implementation/conformance plans, and evidence.
 
 | Document | Classification | Disposition / action |
 |---|---|---|
-| [`../README.md`](../README.md) | Current / repository entry point | Retain; now distinguishes canonical Content Cache 1.26 artifact storage from the platform ingestion-cache path and from Phase 1 end-to-end use. Maturity evidence remains dated 2026-10-14. |
+| [`../README.md`](../README.md) | Current / repository entry point | Retain; distinguishes canonical Content Cache 1.26 artifact storage from the platform ingestion-cache path and Phase 1 end-to-end use. The 14-check Core conformance, 51-test, and workload figures are explicitly historical snapshots dated 2026-10-14, not rerun by this PR. Extended conformance, load/SLO acceptance, and end-to-end adoption remain separate. |
 | [`index.md`](index.md), [`SUMMARY.md`](SUMMARY.md) | Current / docs navigation | Retain; added a link to this inventory. |
 | [`design.md`](design.md), [`architecture.md`](architecture.md), [`schema.md`](schema.md), [`schema.sql`](schema.sql) | Current / contract and implementation detail | Retain; together document behavior, architecture, and schema. Design 1.26 is the contract authority; the service-specific design explains this implementation. |
 | [`api.md`](api.md) | Current / API reference | Retain; explicitly covers unauthenticated default operation and opt-in Security Provider context middleware. Tenant identifiers in the default mode are selectors, not verified caller identity. |
